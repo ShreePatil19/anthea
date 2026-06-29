@@ -47,6 +47,12 @@ def render_flower(canvas, flower_state, t):
         module.draw(canvas, cx, cy, bloom=bloom, scale=scale, t=t, opts=None)
 
 
+def render_garden(canvas, flowers, t):
+    """Render every flower, nearer ones (lower on screen) drawn last/on top."""
+    for f in sorted(flowers, key=lambda fl: fl.cy):
+        render_flower(canvas, f, t)
+
+
 def demo_background(w, h, t):
     """Soft gradient background for demo mode (no camera)."""
     bg = np.zeros((h, w, 3), dtype=np.uint8)
@@ -65,17 +71,36 @@ def demo_background(w, h, t):
     return bg
 
 
-def draw_hud(canvas, flower_state, hand_count, fps, t, hint_fade=1.0):
+def draw_hud(canvas, garden, hand_count, fps, t, hint_fade=1.0):
+    """garden may be a Controller, a list of FlowerState, or a single FlowerState."""
     if not config.show_hud:
         return
     h, w = canvas.shape[:2]
-    bloom_pct = int(flower_state.bloom * 100)
-    scale_val = f"{flower_state.scale:.2f}"
-    species_name = flower_state.species.replace("_", " ").title()
+
+    # Normalise the argument into a small summary.
+    if hasattr(garden, "flowers"):                 # Controller
+        flowers = garden.flowers
+        species_name = garden.species
+        bloom = garden.bloom
+        scale_val = garden.scale
+    elif isinstance(garden, (list, tuple)):        # list of FlowerState
+        flowers = list(garden)
+        first = flowers[0] if flowers else None
+        species_name = first.species if first else "-"
+        bloom = (sum(f.bloom for f in flowers) / len(flowers)) if flowers else 0.0
+        scale_val = first.scale if first else 0.0
+    else:                                          # single FlowerState
+        flowers = [garden]
+        species_name = garden.species
+        bloom = garden.bloom
+        scale_val = garden.scale
+
+    species_name = species_name.replace("_", " ").title()
     lines = [
+        f"Flowers: {len(flowers)}",
         f"Species: {species_name}",
-        f"Bloom: {bloom_pct}%",
-        f"Scale: {scale_val}",
+        f"Bloom: {int(bloom * 100)}%",
+        f"Size: {scale_val:.2f}",
         f"Hands: {hand_count}",
         f"FPS: {fps:.0f}",
     ]
@@ -89,10 +114,11 @@ def draw_hud(canvas, flower_state, hand_count, fps, t, hint_fade=1.0):
 
     # Gesture hint fades after a few seconds
     if hint_fade > 0.05:
-        hint = "1 finger=sunflower  2=rose  3=spider lily  open hand=bloom"
+        hint = ("right hand fingers = how many   left hand open = bloom   "
+                "spread hands = size   left pinch = change flower")
         alpha = min(1.0, hint_fade)
         ov = canvas.copy()
         cv2.rectangle(ov, (0, h - 36), (w, h), (20, 20, 20), -1)
         cv2.putText(ov, hint, (10, h - 12), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.50, (200, 200, 200), 1, cv2.LINE_AA)
+                    0.46, (200, 200, 200), 1, cv2.LINE_AA)
         cv2.addWeighted(ov, alpha, canvas, 1 - alpha, 0, canvas)

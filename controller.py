@@ -1,14 +1,30 @@
 """
-Maps hand signals to active species, bloom, scale, and position.
+Maps hand signals to a garden of flowers.
+
+Two-hand control:
+  right hand finger count -> number of flowers (0..max_flowers)
+  left hand open/close     -> bloom
+  distance between hands    -> size
+  left hand pinch (cycle)   -> species
+  midpoint between hands    -> where the flowers sit
+
+One-hand fallback:
+  finger count -> number of flowers
+  open/close   -> bloom
+  depth        -> size
+  pinch cycle  -> species
+  hand position-> where the flowers sit
 """
-import time
 import config
-from util import EMA, lerp
+from util import EMA, lerp, jitter
 
 SPECIES_NAMES = ["sunflower", "blue_rose", "spider_lily"]
-SPECIES_FINGER_MAP = {1: 0, 2: 1, 3: 2}   # extended_fingers -> species index
 
 _PINCH_CYCLE_COOLDOWN = 0.6  # seconds between pinch-triggered species cycles
+
+
+def _clamp01(v):
+    return max(0.0, min(1.0, v))
 
 
 class FlowerState:
@@ -33,86 +49,146 @@ class FlowerState:
 
 
 class Controller:
+    """Maintains a list of FlowerState driven by hand gestures."""
+
     def __init__(self, canvas_w, canvas_h):
         self.w = canvas_w
         self.h = canvas_h
-        self.flower = FlowerState(canvas_w // 2, canvas_h // 2, species_idx=0)
+        self.flowers = [FlowerState(canvas_w // 2, int(canvas_h * 0.5), 0)]
+        self.species_idx = 0
+        self.center = (canvas_w // 2, int(canvas_h * 0.5))
+        self.bloom_target = 0.5
+        self.size_target = 1.0
+
         self._pinch_cycle_last = 0.0
-        self._last_pinch_high  = False
-
-    def update(self, hands, t):
-        """
-        hands: list of Hand objects from HandTracker.
-        t: current time in seconds.
-        Returns the updated FlowerState.
-        """
-        flower = self.flower
-
-        if not hands:
-            # No hand detected: gentle idle sway, no state change
-            return flower
-
-        if len(hands) == 1:
-            self._one_hand_mode(hands[0], t)
-        else:
-            self._two_hand_mode(hands, t)
-
-        return flower
+        self._last_pinch_high = False
+        self._count_cand = 1
+        self._count_cand_t = 0.0
+        self._count = 1
 
     # ------------------------------------------------------------------
 
+    def update(self, hands, t):
+        """hands: list of Hand objects. Returns the list of FlowerState."""
+        if hands:
+            if len(hands) == 1:
+                self._one_hand_mode(hands[0], t)
+            else:
+                self._two_hand_mode(hands, t)
+        self._apply(t)
+        return self.flowers
+
+    @property
+    def count(self):
+        return len(self.flowers)
+
+    @property
+    def species(self):
+        return SPECIES_NAMES[self.species_idx]
+
+    @property
+    def bloom(self):
+        return sum(f.bloom for f in self.flowers) / len(self.flowers) if self.flowers else 0.0
+
+    @property
+    def scale(self):
+        return self.size_target
+
+    # ------------------------------------------------------------------
+
+    def _stable_count(self, raw, t):
+        """Debounce the finger count so it does not flicker."""
+        raw = max(0, min(config.max_flowers, raw))
+        if raw != self._count_cand:
+            self._count_cand = raw
+            self._count_cand_t = t
+        elif t - self._count_cand_t >= config.count_hold_seconds:
+            self._count = raw
+        return self._count
+
+    def _cycle_species_on_pinch(self, hand, t):
+        pinch_high = hand.pinch > 0.75
+        if pinch_high and not self._last_pinch_high:
+            if t - self._pinch_cycle_last > _PINCH_CYCLE_COOLDOWN:
+                self.species_idx = (self.species_idx + 1) % len(SPECIES_NAMES)
+                self._pinch_cycle_last = t
+        self._last_pinch_high = pinch_high
+
     def _one_hand_mode(self, hand, t):
-        flower = self.flower
+        self._stable_count(hand.extended_fingers, t)
 
-        # Position: middle finger MCP in pixel coords
         px, py = hand.position
-        flower.cx = int(px) if px else flower.cx
-        flower.cy = int(py) if py else flower.cy
+        if px:
+            self.center = (int(px), int(py))
 
-        # Species from extended fingers (if 1, 2, or 3 fingers clear)
-        ef = hand.extended_fingers
-        if ef in SPECIES_FINGER_MAP:
-            flower.species_idx = SPECIES_FINGER_MAP[ef]
-        else:
-            # Tight pinch cycles species
-            pinch_high = hand.pinch > 0.75
-            if pinch_high and not self._last_pinch_high:
-                now = t
-                if now - self._pinch_cycle_last > _PINCH_CYCLE_COOLDOWN:
-                    flower.species_idx = (flower.species_idx + 1) % 3
-                    self._pinch_cycle_last = now
-            self._last_pinch_high = pinch_high
+        self._cycle_species_on_pinch(hand, t)
 
-        # Bloom
         if config.bloom_driver == "pinch":
-            bloom_target = 1.0 - hand.pinch
+            self.bloom_target = 1.0 - hand.pinch
         else:
-            bloom_target = hand.openness
+            self.bloom_target = hand.openness
 
-        # Scale from depth
-        scale_target = lerp(config.scale_min, config.scale_max, hand.depth)
-
-        flower.update(bloom_target, scale_target)
+        self.size_target = lerp(config.scale_min, config.scale_max, hand.depth)
 
     def _two_hand_mode(self, hands, t):
-        flower = self.flower
-        # Identify left vs right; if ambiguous, use order (first = left, second = right)
         left  = next((h for h in hands if h.handedness == "Left"),  hands[0])
         right = next((h for h in hands if h.handedness == "Right"), hands[-1])
 
-        # Left hand: position and species
-        px, py = left.position
-        flower.cx = int(px) if px else flower.cx
-        flower.cy = int(py) if py else flower.cy
-        ef = left.extended_fingers
-        if ef in SPECIES_FINGER_MAP:
-            flower.species_idx = SPECIES_FINGER_MAP[ef]
+        # Right hand finger count -> number of flowers
+        self._stable_count(right.extended_fingers, t)
 
-        # Right hand: bloom
+        # Left hand open/close -> bloom
         if config.bloom_driver == "pinch":
-            bloom_target = 1.0 - right.pinch
+            self.bloom_target = 1.0 - left.pinch
         else:
-            bloom_target = right.openness
-        scale_target = lerp(config.scale_min, config.scale_max, right.depth)
+            self.bloom_target = left.openness
 
-        flower.update(bloom_target, scale_target)
+        # Distance between hands -> size
+        lx, ly = left.position
+        rx, ry = right.position
+        if lx and rx:
+            dist = (abs(rx - lx) ** 2 + abs(ry - ly) ** 2) ** 0.5
+            dist_frac = _clamp01(dist / max(self.w, 1) * 1.7)
+            self.size_target = lerp(config.scale_min, config.scale_max, dist_frac)
+            self.center = (int((lx + rx) / 2), int((ly + ry) / 2))
+
+        # Left hand pinch cycles species
+        self._cycle_species_on_pinch(left, t)
+
+    # ------------------------------------------------------------------
+
+    def _ensure_count(self, n):
+        """Grow or shrink the flower list, preserving existing flowers."""
+        n = max(0, min(config.max_flowers, n))
+        while len(self.flowers) < n:
+            f = FlowerState(self.center[0], self.center[1], self.species_idx)
+            f.bloom = 0.0          # new flowers grow in from a bud
+            self.flowers.append(f)
+        while len(self.flowers) > n:
+            self.flowers.pop()
+
+    def _layout(self, n, size):
+        """Positions for n flowers in a gentle arc around self.center."""
+        cx, cy = self.center
+        if n <= 0:
+            return []
+        spacing = max(40, int(config.flower_spacing * size))
+        positions = []
+        for i in range(n):
+            off = (i - (n - 1) / 2.0)
+            fx = cx + off * spacing
+            # Outer flowers dip a little lower, like a held bunch
+            norm = off / max((n - 1) / 2.0, 1.0)
+            fy = cy + int((norm ** 2) * config.arc_dip * size)
+            positions.append((int(fx), int(fy)))
+        return positions
+
+    def _apply(self, t):
+        self._ensure_count(self._count)
+        positions = self._layout(len(self.flowers), self.size_target)
+        for i, f in enumerate(self.flowers):
+            f.species_idx = self.species_idx
+            f.cx, f.cy = positions[i]
+            b = _clamp01(self.bloom_target + jitter(i * 3 + 1, 0.08))
+            s = self.size_target * (1.0 + jitter(i * 5 + 2, 0.10))
+            f.update(b, s)

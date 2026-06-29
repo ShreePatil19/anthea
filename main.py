@@ -11,50 +11,62 @@ import cv2
 
 import config
 from hand_tracker import HandTracker
-from controller import Controller
-from renderer import render_flower, demo_background, draw_hud
+from controller import Controller, FlowerState
+from renderer import render_garden, demo_background, draw_hud
 from controller import SPECIES_NAMES
 
 
-def _demo_signals(t, canvas_w, canvas_h):
-    """Generate synthetic hand signals from sine waves for demo mode."""
-    species_period = 6.0   # seconds per species
-    species_idx = int(t / species_period) % 3
+def _demo_garden(t, W, H):
+    """Build a synthetic garden for demo mode without a camera.
 
-    bloom  = (math.sin(t * 0.7) + 1) / 2
-    scale  = 0.8 + 0.6 * ((math.sin(t * 0.4) + 1) / 2)
-    cx = int(canvas_w  / 2 + math.sin(t * 0.3) * canvas_w  * 0.2)
-    cy = int(canvas_h * 0.45 + math.cos(t * 0.25) * canvas_h * 0.1)
-    return species_idx, bloom, scale, cx, cy
+    Sweeps the flower count 1..5 and back, cycles species, and breathes the
+    bloom so the demo exercises the same garden the hands would drive.
+    """
+    species_idx = int(t / 6.0) % 3
+    # Triangle wave 1..max_flowers..1
+    span = config.max_flowers - 1
+    phase = (t / 2.0) % (2 * span)
+    count = int(1 + (phase if phase <= span else 2 * span - phase))
+    count = max(1, min(config.max_flowers, count))
+
+    bloom = (math.sin(t * 0.7) + 1) / 2
+    size  = 0.8 + 0.5 * ((math.sin(t * 0.4) + 1) / 2)
+
+    cx, cy = W // 2, int(H * 0.5)
+    spacing = max(40, int(config.flower_spacing * size))
+    flowers = []
+    for i in range(count):
+        off = (i - (count - 1) / 2.0)
+        fx = int(cx + off * spacing)
+        norm = off / max((count - 1) / 2.0, 1.0)
+        fy = int(cy + (norm ** 2) * config.arc_dip * size)
+        f = FlowerState(fx, fy, species_idx)
+        f.bloom = bloom
+        f.scale = size
+        flowers.append(f)
+    return flowers
 
 
 def run_demo(headless=False, n_frames=None):
     """
-    Demo mode: animate flowers with no camera and no display.
+    Demo mode: animate a garden with no camera and no display.
     If headless=True, never calls cv2.imshow. If n_frames is set, stop after that many.
     """
     W, H = 1280, 720
-    # Synthetic flower state container
-    from controller import FlowerState
-    flower = FlowerState(W // 2, H // 2, species_idx=0)
 
     hint_start = time.time()
     frame_count = 0
     t0 = time.time()
+    canvas = demo_background(W, H, 0.0)
 
     while True:
         t = time.time() - t0
-        species_idx, bloom, scale, cx, cy = _demo_signals(t, W, H)
-        flower.species_idx = species_idx
-        flower.cx = cx
-        flower.cy = cy
-        flower.bloom = bloom
-        flower.scale = scale
+        flowers = _demo_garden(t, W, H)
 
         canvas = demo_background(W, H, t)
-        render_flower(canvas, flower, t)
+        render_garden(canvas, flowers, t)
         hint_fade = max(0.0, 1.0 - (time.time() - hint_start) / 5.0)
-        draw_hud(canvas, flower, hand_count=0, fps=30, t=t, hint_fade=hint_fade)
+        draw_hud(canvas, flowers, hand_count=0, fps=30, t=t, hint_fade=hint_fade)
 
         if not headless:
             cv2.imshow("anthea demo", canvas)
@@ -104,10 +116,10 @@ def run_webcam():
             t = time.time() - t0
             ts_ms = t * 1000
             hands = tracker.process(frame, ts_ms)
-            flower = controller.update(hands, t)
+            flowers = controller.update(hands, t)
 
             canvas = frame.copy()
-            render_flower(canvas, flower, t)
+            render_garden(canvas, flowers, t)
             hint_fade = max(0.0, 1.0 - (time.time() - hint_start) / 6.0)
 
             # FPS
@@ -116,7 +128,7 @@ def run_webcam():
             frame_times = [ft for ft in frame_times if now - ft < 1.0]
             fps = len(frame_times)
 
-            draw_hud(canvas, flower, len(hands), fps, t, hint_fade)
+            draw_hud(canvas, controller, len(hands), fps, t, hint_fade)
             cv2.imshow("anthea", canvas)
 
             key = cv2.waitKey(1) & 0xFF

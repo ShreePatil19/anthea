@@ -126,6 +126,87 @@ TESTS = [
 ]
 
 
+class _FakeHand:
+    """Minimal stand-in for a tracked hand, for headless gesture tests."""
+    def __init__(self, handedness, position, openness=0.5, pinch=0.0,
+                 depth=0.5, extended_fingers=0):
+        self.handedness = handedness
+        self.position = position
+        self.openness = openness
+        self.pinch = pinch
+        self.depth = depth
+        self.extended_fingers = extended_fingers
+
+
+def _garden_test():
+    """Drive the Controller with synthetic hands and verify count control."""
+    from controller import Controller
+    from renderer import render_garden, demo_background, draw_hud
+
+    ctrl = Controller(W, H)
+    ok = True
+
+    # Right hand shows 3 fingers, left hand open. Hold past the debounce window.
+    for step in range(20):
+        t = step * 0.05
+        left  = _FakeHand("Left",  (W * 0.40, H * 0.5), openness=0.9, pinch=0.0)
+        right = _FakeHand("Right", (W * 0.60, H * 0.5), extended_fingers=3)
+        flowers = ctrl.update([left, right], t)
+    n3 = len(flowers)
+    print(f"  3 fingers -> {n3} flowers {'PASS' if n3 == 3 else 'FAIL'}")
+    ok = ok and n3 == 3
+
+    # Now show 5 fingers; count should climb to 5.
+    for step in range(20):
+        t = 2.0 + step * 0.05
+        left  = _FakeHand("Left",  (W * 0.30, H * 0.5), openness=0.9)
+        right = _FakeHand("Right", (W * 0.70, H * 0.5), extended_fingers=5)
+        flowers = ctrl.update([left, right], t)
+    n5 = len(flowers)
+    print(f"  5 fingers -> {n5} flowers {'PASS' if n5 == 5 else 'FAIL'}")
+    ok = ok and n5 == 5
+
+    # Fist (0 fingers) clears the garden.
+    for step in range(20):
+        t = 4.0 + step * 0.05
+        right = _FakeHand("Right", (W * 0.70, H * 0.5), extended_fingers=0)
+        left  = _FakeHand("Left",  (W * 0.30, H * 0.5), openness=0.1)
+        flowers = ctrl.update([left, right], t)
+    n0 = len(flowers)
+    print(f"  fist     -> {n0} flowers {'PASS' if n0 == 0 else 'FAIL'}")
+    ok = ok and n0 == 0
+
+    # Render a 5-flower garden frame for visual inspection. Hands held a
+    # moderate distance apart so five blooms sit at a sensible size.
+    ctrl2 = Controller(W, H)
+    for step in range(24):
+        t = step * 0.05
+        left  = _FakeHand("Left",  (W * 0.44, H * 0.42), openness=0.85)
+        right = _FakeHand("Right", (W * 0.56, H * 0.42), extended_fingers=5)
+        flowers = ctrl2.update([left, right], t)
+    canvas = demo_background(W, H, 3.0)
+    render_garden(canvas, flowers, 3.0)
+    draw_hud(canvas, ctrl2, hand_count=2, fps=30, t=3.0, hint_fade=1.0)
+    cv2.imwrite("samples/garden_5.png", canvas)
+    print("  saved samples/garden_5.png")
+
+    # Also render a 3-flower blue rose garden to show species + count together.
+    ctrl3 = Controller(W, H)
+    ctrl3.species_idx = 1
+    for step in range(24):
+        t = step * 0.05
+        left  = _FakeHand("Left",  (W * 0.46, H * 0.46), openness=0.8)
+        right = _FakeHand("Right", (W * 0.54, H * 0.46), extended_fingers=3)
+        flowers = ctrl3.update([left, right], t)
+    canvas = demo_background(W, H, 2.0)
+    render_garden(canvas, flowers, 2.0)
+    draw_hud(canvas, ctrl3, hand_count=2, fps=30, t=2.0, hint_fade=0.0)
+    cv2.imwrite("samples/garden_3_rose.png", canvas)
+    print("  saved samples/garden_3_rose.png")
+
+    return ok
+
+
 def run():
     print("=== anthea selftest ===")
     gate_results = {}
@@ -175,6 +256,15 @@ def run():
         print(f"  saved {demo_path}")
     except Exception as e:
         print(f"  demo mode error: {e}")
+        all_passed = False
+
+    # Garden gesture control test (synthetic hands, no camera)
+    print("\n-- garden gesture control --")
+    try:
+        if not _garden_test():
+            all_passed = False
+    except Exception as e:
+        print(f"  garden test error: {e}")
         all_passed = False
 
     print(f"\n=== colour gate results ===")
