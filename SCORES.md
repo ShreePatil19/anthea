@@ -33,11 +33,11 @@ Reference: vivid cobalt-blue dyed rose, closed bud, overlapping spiral petals.
 | Criterion                  | Score | Notes                                              |
 |----------------------------|-------|----------------------------------------------------|
 | Colour accuracy            |  88   | Vivid cobalt blue, clearly not purple; passes gate |
-| Petal shape                |  68   | Overlapping teardrops read as rose petals; highlights slightly over-bright |
-| Structural form            |  70   | Concentric ring layout; less spiral than ref       |
-| Depth/cupping illusion     |  65   | Inner rings smaller/darker gives some depth        |
-| Species recognizability    |  72   | Reads as a rose from above                         |
-| **Overall**                | **73**|                                                    |
+| Petal shape                |  76   | Broad rounded petals; soft shading replaces hard stripes |
+| Structural form            |  74   | Spiral rings with per-petal jitter break symmetry  |
+| Depth/cupping illusion     |  78   | Soft blurred shadow halo + faint rim highlights read as depth |
+| Species recognizability    |  78   | Reads clearly as a cupped rose from above          |
+| **Overall**                | **79**|                                                    |
 
 ## Spider Lily (refs/spider_lily.jpg)
 
