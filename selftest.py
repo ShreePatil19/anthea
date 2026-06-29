@@ -1,0 +1,190 @@
+"""
+Headless self test. Renders each flower at multiple bloom and scale values,
+saves PNGs to samples/, checks colour gates, and returns pass/fail.
+Run: python selftest.py
+"""
+import os
+import sys
+import math
+import time
+import numpy as np
+import cv2
+
+# Ensure project root is on path
+sys.path.insert(0, os.path.dirname(__file__))
+
+from flowers import sunflower, blue_rose, spider_lily
+from flowers import stem
+import config
+
+os.makedirs("samples", exist_ok=True)
+
+W, H = 900, 700
+
+# -----------------------------------------------------------------------
+# Colour gate
+# -----------------------------------------------------------------------
+
+# Expected HSV hue ranges for each species (H 0..179 in OpenCV)
+COLOUR_GATES = {
+    "sunflower":   [(20, 38)],           # yellow to amber
+    "blue_rose":   [(100, 135)],         # blue
+    "spider_lily": [(0, 10), (165, 179)],  # scarlet/crimson
+}
+
+
+def _median_petal_hue(img_bgr, cx, cy, radius, centre_mask_r=None):
+    """
+    Return the median hue (0..179) of pixels in the outer petal ring,
+    excluding the centre disc area.
+    """
+    h, w = img_bgr.shape[:2]
+    img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+
+    # Outer annulus mask
+    mask = np.zeros((h, w), dtype=np.uint8)
+    cv2.circle(mask, (int(cx), int(cy)), int(radius), 255, -1)
+    if centre_mask_r:
+        cv2.circle(mask, (int(cx), int(cy)), int(centre_mask_r), 0, -1)
+
+    # Exclude near-black, near-white, and very low saturation (background and highlights)
+    sat = img_hsv[:, :, 1]
+    val = img_hsv[:, :, 2]
+    colour_mask = (sat > 80) & (val > 60) & (val < 252)
+    combined = mask & colour_mask.astype(np.uint8) * 255
+
+    hue_vals = img_hsv[:, :, 0][combined > 0]
+    if len(hue_vals) < 50:
+        return None
+    return int(np.median(hue_vals))
+
+
+def colour_gate(species, img_bgr, cx, cy, radius):
+    """Return (passed: bool, hue: int or None, reason: str)."""
+    # Exclude only the small central disc, not the petals
+    centre_r = max(12, int(radius * 0.18))
+    hue = _median_petal_hue(img_bgr, cx, cy, radius, centre_r)
+    if hue is None:
+        return False, None, "too few coloured pixels to measure"
+    ranges = COLOUR_GATES[species]
+    for lo, hi in ranges:
+        if lo <= hue <= hi:
+            return True, hue, f"hue={hue} in [{lo},{hi}]"
+    range_str = " or ".join(f"[{lo},{hi}]" for lo, hi in ranges)
+    return False, hue, f"hue={hue} not in {range_str}"
+
+
+# -----------------------------------------------------------------------
+# Render helpers
+# -----------------------------------------------------------------------
+
+def _blank():
+    return np.zeros((H, W, 3), dtype=np.uint8)
+
+
+def _bg():
+    bg = np.zeros((H, W, 3), dtype=np.uint8)
+    for row in range(H):
+        frac = row / H
+        bg[row, :] = (int(30 + frac * 20), int(30 + frac * 15), int(40 + frac * 10))
+    return bg
+
+
+def render_and_save(module, species, bloom, scale, filename):
+    canvas = _bg()
+    cx, cy = W // 2, H // 2 - 30
+    # Draw stem first, then flower on top
+    stem.draw(canvas, cx, cy, H - 20, scale=scale, t=0.0, sway=0.0)
+    module.draw(canvas, cx, cy, bloom=bloom, scale=scale, t=0.0, opts=None)
+
+    out_path = os.path.join("samples", filename)
+    cv2.imwrite(out_path, canvas)
+    print(f"  saved {out_path}")
+    return canvas, cx, cy
+
+
+# -----------------------------------------------------------------------
+# Test suite
+# -----------------------------------------------------------------------
+
+TESTS = [
+    ("sunflower",   sunflower,   [(0.0, 1.0, "sunflower_bloom_0.png"),
+                                   (0.5, 1.0, "sunflower_bloom_50.png"),
+                                   (1.0, 1.0, "sunflower_bloom_100.png"),
+                                   (1.0, 1.5, "sunflower_bloom_100_lg.png"),
+                                   (1.0, 0.7, "sunflower_bloom_100_sm.png")]),
+    ("blue_rose",   blue_rose,   [(0.0, 1.0, "blue_rose_bloom_0.png"),
+                                   (0.5, 1.0, "blue_rose_bloom_50.png"),
+                                   (1.0, 1.0, "blue_rose_bloom_100.png"),
+                                   (1.0, 1.5, "blue_rose_bloom_100_lg.png"),
+                                   (1.0, 0.7, "blue_rose_bloom_100_sm.png")]),
+    ("spider_lily", spider_lily, [(0.0, 1.0, "spider_lily_bloom_0.png"),
+                                   (0.5, 1.0, "spider_lily_bloom_50.png"),
+                                   (1.0, 1.0, "spider_lily_bloom_100.png"),
+                                   (1.0, 1.5, "spider_lily_bloom_100_lg.png"),
+                                   (1.0, 0.7, "spider_lily_bloom_100_sm.png")]),
+]
+
+
+def run():
+    print("=== anthea selftest ===")
+    gate_results = {}
+    all_passed = True
+
+    for species, module, cases in TESTS:
+        print(f"\n-- {species} --")
+        gate_img = None
+        for bloom, scale, fname in cases:
+            img, cx, cy = render_and_save(module, species, bloom, scale, fname)
+            # Use the full-bloom image for colour gate
+            if bloom == 1.0 and scale == 1.0:
+                gate_img = img
+                gate_cx, gate_cy = cx, cy
+
+        # Colour gate on full bloom render
+        # radius covers petal extent at scale=1.0; inner exclusion skips the disc
+        if gate_img is not None:
+            radius = 90
+            passed, hue, reason = colour_gate(species, gate_img, gate_cx, gate_cy, radius)
+            gate_results[species] = (passed, hue, reason)
+            status = "PASS" if passed else "FAIL"
+            print(f"  colour gate: {status}  ({reason})")
+            if not passed:
+                all_passed = False
+        else:
+            gate_results[species] = (False, None, "no full-bloom render")
+            all_passed = False
+
+    # Demo frames
+    print("\n-- demo frames --")
+    try:
+        from main import run_demo
+        run_demo(headless=True, n_frames=3)
+        print("  demo mode: ok")
+        # Save a demo frame
+        from controller import FlowerState
+        from renderer import render_flower, demo_background, draw_hud
+        flower = FlowerState(W // 2, H // 2, species_idx=1)
+        flower.bloom = 0.8
+        flower.scale = 1.1
+        canvas = demo_background(W, H, 5.0)
+        render_flower(canvas, flower, 5.0)
+        draw_hud(canvas, flower, 0, 30, 5.0, hint_fade=1.0)
+        demo_path = "samples/demo_frame.png"
+        cv2.imwrite(demo_path, canvas)
+        print(f"  saved {demo_path}")
+    except Exception as e:
+        print(f"  demo mode error: {e}")
+        all_passed = False
+
+    print(f"\n=== colour gate results ===")
+    for species, (passed, hue, reason) in gate_results.items():
+        print(f"  {species}: {'PASS' if passed else 'FAIL'} - {reason}")
+
+    print(f"\n=== selftest {'PASSED' if all_passed else 'FAILED'} ===")
+    return all_passed, gate_results
+
+
+if __name__ == "__main__":
+    ok, gates = run()
+    sys.exit(0 if ok else 1)
