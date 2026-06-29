@@ -9,6 +9,12 @@ env/
 # MediaPipe model (auto downloaded on first run)
 hand_landmarker.task
 
+# Downloaded reference photos (provenance tracked in refs/SOURCES.md instead)
+refs/*.jpg
+refs/*.jpeg
+refs/*.png
+refs/*.webp
+
 # OS
 .DS_Store
 Thumbs.db

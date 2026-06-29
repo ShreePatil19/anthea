@@ -62,6 +62,25 @@ file, so provenance is unclear. Original work plus credit keeps this repo clean.
 Aim to exceed the references: real golden angle seed packing, an anatomically correct
 spider lily, and smooth HSV gradients are the upgrades that make anthea superior.
 
+### Anti aliasing and gradients (required, this is the biggest quality lever)
+
+OpenCV does not anti alias polygon edges well, which is why naive `cv2.fillPoly`
+flowers look faceted and flat. Fix it with supersampling:
+
+- Render every flower onto an offscreen canvas at 3x to 4x the target size, then
+  downscale to target with `cv2.resize(..., interpolation=cv2.INTER_AREA)` (or Pillow
+  `Image.resize(..., Image.LANCZOS)`). This gives smooth, soft, professional edges.
+- Use true gradients on petals, not flat fills: build a per petal radial or linear
+  gradient by interpolating two HSV colours across a mask, or use `cv2.addWeighted`
+  between gradient stops. Petal base darker and richer, tip lighter and cooler.
+- Petal outlines: 32 or more points so curves are smooth at supersampled resolution.
+- Optional, only if it installs cleanly in a try/except during setup: use `pycairo`
+  or `drawsvg` for native vector anti aliasing and gradients. If the import or install
+  fails, fall back to the supersampling path above. An optional dependency must never
+  break the build or the run.
+- Pillow (`pillow`) is an allowed, safe dependency for the downscale step. `pycairo`
+  is optional only.
+
 ## The three flowers (render each as its own module under `flowers/`)
 
 Each flower module exposes `draw(canvas, cx, cy, bloom, scale, t, opts)` where
@@ -160,7 +179,8 @@ selftest.py          # headless render check, see Verification
 CREDITS.md           # design references and thanks, see provenance section
 SCORES.md            # self grade scorecard per flower, see Self grading loop
 samples/             # rendered PNG proofs, committed so the user can see them
-refs/                # optional user supplied reference photos (may be empty)
+refs/                # reference photos (downloaded or user supplied), gitignored
+refs/SOURCES.md      # provenance and licences for any downloaded references
 ```
 
 ## config.py tunables
@@ -183,45 +203,82 @@ in a headless cloud environment where no camera and no display exist (guard all
 A small toggleable overlay showing: active species, bloom percent, scale, hand count,
 and FPS. A one line gesture hint on screen at startup.
 
-## Self grading loop (accept only at 95 or above)
+## Self grading loop (reference anchored, bias resistant, accept only at 95+)
 
-After rendering the sample PNGs, you must grade your own work with your vision and
-iterate until it is genuinely good. Do not skip this and do not inflate scores.
+A model grading its own renders tends to be too kind (this is called self enhancement
+bias, and it is well documented). Counter it three ways: grade against a real reference
+image, run a cheap objective colour check in code, and grade adversarially.
 
-How to grade:
+### Step A, get a reference image per species (do this once per run, before grading)
 
-1. For each flower, OPEN its rendered sample PNGs with the Read tool so you actually
-   SEE them (grade the bloom = 1.0 render as the main judgement, and glance at the
-   0.5 render to confirm a believable half open state). If files exist under `refs/`
-   for that species, open them too and compare your render against them.
-2. Score each flower out of 100 using this weighted rubric. Be a harsh, honest critic.
-   List the specific points deducted per criterion in `SCORES.md`.
+Reference based grading is far more reliable than rubric only grading. For each
+species, obtain one real reference photo into `refs/`:
 
-   - Botanical form and arrangement (25): correct petal count, shape, and layout for
-     the species; the silhouette reads unmistakably as this flower.
-   - Signature feature fidelity (20): sunflower shows a real golden angle seed spiral;
-     blue rose shows nested cupped petal layers and is clearly blue not purple; spider
-     lily shows thin recurved wavy tepals AND long protruding curved stamens.
-   - Colour realism (15): correct hue range with a natural HSV gradient, not flat or
-     garish, not neon.
-   - Depth and shading (15): layered shadow, fill, and highlight give a sense of 3D;
-     soft edges, not a flat cutout.
-   - Edge and curve quality (10): smooth anti aliased petal curves, no faceting; edges
-     are organic and wavy where the species calls for it.
-   - Bloom dynamics (10): the bud to open transition reads correctly across steps.
-   - Overall beauty and gift worthiness (5): it looks intentional and lovely.
+1. If a user supplied image already exists in `refs/` for the species (for example
+   `refs/spider_lily.jpg`), use it and skip downloading.
+2. Otherwise fetch a freely licensed photo from Wikimedia Commons. Use WebSearch and
+   WebFetch to find a suitable Commons file, then download the direct image with Bash
+   `curl`. Use the MediaWiki API to get the direct URL and the licence, for example:
+   `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=Lycoris%20radiata&gsrnamespace=6&gsrlimit=5&prop=imageinfo&iiprop=url|extmetadata&format=json`
+   Pick a result whose `extmetadata.LicenseShortName` is Public domain, CC0, or CC BY.
+   Save the file as `refs/<species>.jpg`.
+3. Record provenance in `refs/SOURCES.md`: species, file, author, licence, and source
+   URL. This keeps the public repo clean. Prefer Public domain or CC0; if CC BY, the
+   attribution in SOURCES.md is required.
+4. Gitignore the downloaded binaries (add `refs/*.jpg`, `refs/*.png` to `.gitignore`)
+   so the repo stays light, but always commit `refs/SOURCES.md`. Re download on later
+   runs if the files are missing.
+5. If there is no network and no user image, fall back to rubric only grading and say
+   so honestly in `SCORES.md`.
 
-3. Acceptance gate: every flower must reach 95 or above. Any flower below 95, identify
-   the largest deductions, improve that flower's renderer specifically, re render its
-   samples, and grade again.
-4. Bound the loop: do at most 6 improve and regrade iterations per run. If a flower
-   still falls short of 95 when you run out of iterations or the run is ending, commit
-   your best version and record the real score and the remaining gaps honestly in
-   `SCORES.md` and the PR body. Never write a score you did not earn, and never loop
-   forever burning tokens.
-5. Write `SCORES.md` every run: a table of the three flowers with their latest score,
-   a short per criterion breakdown, and a one line note on what still needs work. Over
-   the night's 3 runs the scores should climb toward and past 95.
+### Step B, objective colour gate (code, runs in selftest)
+
+Add a function that, for a rendered flower, masks out the background and centre and
+computes the median petal hue in OpenCV HSV (H is 0 to 179). Assert the dominant petal
+hue is in range, this is a hard automatic fail independent of any vision score:
+
+- Sunflower petals: H in 20 to 38 (yellow to amber).
+- Blue rose petals: H in 100 to 135 (clearly blue, NOT purple 135 to 160, NOT red).
+- Spider lily tepals: H in 0 to 10 or 165 to 179 (scarlet to crimson).
+
+If a flower fails its colour gate it cannot pass, regardless of the vision score. This
+is the cheap guard that stops a purple rose or an orange lily from sneaking through.
+
+### Step C, adversarial vision grading
+
+For each flower, OPEN with the Read tool: the reference photo AND your rendered samples
+(grade the bloom = 1.0 render as the main judgement, glance at 0.5 for a believable
+half open state). Grade as a skeptical critic who assumes the render is flawed and must
+be convinced otherwise. When in doubt, deduct. Treat the reference photo as ground
+truth for shape, proportion, and colour. Score out of 100 on this rubric and write the
+specific deductions per criterion into `SCORES.md`:
+
+- Match to reference photo (25): silhouette, proportions, and colour match the real
+  flower in `refs/`.
+- Signature feature fidelity (20): sunflower shows a real golden angle seed spiral;
+  blue rose shows nested cupped petal layers and is clearly blue; spider lily shows
+  thin recurved wavy tepals AND long protruding curved stamens.
+- Colour realism (15): correct hue with a natural HSV gradient, not flat, not neon.
+- Depth and shading (15): layered shadow, fill, highlight, a real sense of 3D.
+- Edge and curve quality (10): smooth anti aliased curves from supersampling, no
+  faceting, organic wavy edges where the species calls for it.
+- Bloom dynamics (10): the bud to open transition reads correctly across steps.
+- Overall beauty and gift worthiness (5): intentional and lovely.
+
+### Step D, the loop and the honesty rules
+
+- Acceptance gate: every flower must pass its colour gate AND score 95 or above.
+- For any flower below 95, identify the largest deductions, improve that specific
+  renderer, re render, and regrade. At most 8 improve and regrade iterations per run.
+- If a flower still falls short when iterations or time run out, commit the best
+  version and record the real score and remaining gaps honestly in `SCORES.md` and the
+  PR body. Never write a score you did not earn, never loop forever burning tokens.
+- Note in SCORES.md that this is single model self grading and therefore optimistic by
+  nature; a second, different model judge (for example an Opus reviewer) is the stronger
+  check the user can enable later.
+- Write `SCORES.md` every run: a table of the three flowers with latest score, colour
+  gate pass or fail, a short per criterion breakdown, and one line on what still needs
+  work. Across the night's 3 runs the scores should climb toward and past 95.
 
 ## Verification (you have no webcam and no display in the cloud, so verify like this)
 
@@ -248,10 +305,12 @@ How to grade:
    - If it exists, read `SCORES.md` and spend this run driving the lowest scoring
      flowers up: improve the renderers of any flower below 95, then any other polish
      (smoother smoothing, two hand mode, richer HUD). Refresh `samples/`.
-3. Always run the Verification steps AND the Self grading loop before committing. If
-   the self test fails, fix it before you commit, do not commit a broken self test.
-   Commit the updated `samples/` and `SCORES.md` so the user can see both the renders
-   and the grades.
+3. Always run the Verification steps AND the full Self grading loop before committing:
+   fetch or reuse reference images (Step A), run the objective colour gate (Step B),
+   grade adversarially against the references (Step C), and iterate (Step D). If the
+   self test or a colour gate fails, fix it before you commit. Commit the updated
+   `samples/`, `SCORES.md`, and `refs/SOURCES.md` so the user sees the renders, the
+   grades, and where the references came from.
 4. Commit with a clear conventional message (for example `feat: initial anthea build`
    or `polish: smoother bloom interpolation`), following the hard writing rules above
    (no co-author trailer, no dashes, no vendor branding). Push to `nightly-build`.
@@ -269,7 +328,9 @@ How to grade:
 - The renderers are original code (not copied verbatim from the reference repos) and
   `CREDITS.md` thanks and links the design references.
 - Rendering looks polished: smooth petal curves, soft shadows, HSV gradients, anti
-  aliased edges. Plain flat shapes are not acceptable, this is a gift.
+  aliased edges from supersampling. Plain flat shapes are not acceptable, this is a gift.
+- Every flower passes its objective colour gate (sunflower yellow, blue rose blue,
+  spider lily scarlet) and is graded against a real reference photo in `refs/`.
 - `python main.py --demo` is written so it would animate without a camera or display.
 - `SCORES.md` exists with honest, vision based grades for all three flowers, and the
   target is every flower at 95 or above. If a flower is below 95 at the end, that is
