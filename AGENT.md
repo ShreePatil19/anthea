@@ -158,6 +158,9 @@ flowers/
 requirements.txt
 selftest.py          # headless render check, see Verification
 CREDITS.md           # design references and thanks, see provenance section
+SCORES.md            # self grade scorecard per flower, see Self grading loop
+samples/             # rendered PNG proofs, committed so the user can see them
+refs/                # optional user supplied reference photos (may be empty)
 ```
 
 ## config.py tunables
@@ -179,6 +182,46 @@ in a headless cloud environment where no camera and no display exist (guard all
 
 A small toggleable overlay showing: active species, bloom percent, scale, hand count,
 and FPS. A one line gesture hint on screen at startup.
+
+## Self grading loop (accept only at 95 or above)
+
+After rendering the sample PNGs, you must grade your own work with your vision and
+iterate until it is genuinely good. Do not skip this and do not inflate scores.
+
+How to grade:
+
+1. For each flower, OPEN its rendered sample PNGs with the Read tool so you actually
+   SEE them (grade the bloom = 1.0 render as the main judgement, and glance at the
+   0.5 render to confirm a believable half open state). If files exist under `refs/`
+   for that species, open them too and compare your render against them.
+2. Score each flower out of 100 using this weighted rubric. Be a harsh, honest critic.
+   List the specific points deducted per criterion in `SCORES.md`.
+
+   - Botanical form and arrangement (25): correct petal count, shape, and layout for
+     the species; the silhouette reads unmistakably as this flower.
+   - Signature feature fidelity (20): sunflower shows a real golden angle seed spiral;
+     blue rose shows nested cupped petal layers and is clearly blue not purple; spider
+     lily shows thin recurved wavy tepals AND long protruding curved stamens.
+   - Colour realism (15): correct hue range with a natural HSV gradient, not flat or
+     garish, not neon.
+   - Depth and shading (15): layered shadow, fill, and highlight give a sense of 3D;
+     soft edges, not a flat cutout.
+   - Edge and curve quality (10): smooth anti aliased petal curves, no faceting; edges
+     are organic and wavy where the species calls for it.
+   - Bloom dynamics (10): the bud to open transition reads correctly across steps.
+   - Overall beauty and gift worthiness (5): it looks intentional and lovely.
+
+3. Acceptance gate: every flower must reach 95 or above. Any flower below 95, identify
+   the largest deductions, improve that flower's renderer specifically, re render its
+   samples, and grade again.
+4. Bound the loop: do at most 6 improve and regrade iterations per run. If a flower
+   still falls short of 95 when you run out of iterations or the run is ending, commit
+   your best version and record the real score and the remaining gaps honestly in
+   `SCORES.md` and the PR body. Never write a score you did not earn, and never loop
+   forever burning tokens.
+5. Write `SCORES.md` every run: a table of the three flowers with their latest score,
+   a short per criterion breakdown, and a one line note on what still needs work. Over
+   the night's 3 runs the scores should climb toward and past 95.
 
 ## Verification (you have no webcam and no display in the cloud, so verify like this)
 
@@ -202,11 +245,13 @@ and FPS. A one line gesture hint on screen at startup.
    build on the prior run instead of starting over.
 2. Decide state:
    - If the project does not exist yet, build it fully per this spec.
-   - If it exists and runs the self test cleanly, make ONE focused improvement this
-     run (better petal geometry, smoother smoothing, nicer palette, two hand mode,
-     richer HUD, more sample renders) and refresh the `samples/`.
-3. Always run the Verification steps before committing. If the self test fails, fix
-   it before you commit, do not commit a broken self test.
+   - If it exists, read `SCORES.md` and spend this run driving the lowest scoring
+     flowers up: improve the renderers of any flower below 95, then any other polish
+     (smoother smoothing, two hand mode, richer HUD). Refresh `samples/`.
+3. Always run the Verification steps AND the Self grading loop before committing. If
+   the self test fails, fix it before you commit, do not commit a broken self test.
+   Commit the updated `samples/` and `SCORES.md` so the user can see both the renders
+   and the grades.
 4. Commit with a clear conventional message (for example `feat: initial anthea build`
    or `polish: smoother bloom interpolation`), following the hard writing rules above
    (no co-author trailer, no dashes, no vendor branding). Push to `nightly-build`.
@@ -226,4 +271,8 @@ and FPS. A one line gesture hint on screen at startup.
 - Rendering looks polished: smooth petal curves, soft shadows, HSV gradients, anti
   aliased edges. Plain flat shapes are not acceptable, this is a gift.
 - `python main.py --demo` is written so it would animate without a camera or display.
-- One open PR titled "anthea nightly build" with an honest verification note.
+- `SCORES.md` exists with honest, vision based grades for all three flowers, and the
+  target is every flower at 95 or above. If a flower is below 95 at the end, that is
+  stated plainly with the reasons, not hidden or inflated.
+- One open PR titled "anthea nightly build" with an honest verification note and the
+  current flower scores.
