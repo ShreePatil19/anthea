@@ -35,30 +35,30 @@ SEED_LIGHT    = hsv_to_bgr(15, 215, 55)    # dark brown seeds at rim
 def _petal(canvas, px, py, length, width, angle):
     """Draw one petal with shadow, gradient fill, and highlight."""
     pts = curved_petal_polygon(px, py, length, width, angle,
-                               curvature=0.14, n_pts=36)
-    shadow_pts = scale_polygon(pts, px, py, 1.09)
+                               curvature=0.02, n_pts=36)
+    shadow_pts = scale_polygon(pts, px, py, 1.04)
     cv2.fillPoly(canvas, [pts_to_np(shadow_pts)], PETAL_SHADOW)
-    apply_gradient_to_poly(canvas, pts, PETAL_MID, PETAL_TIP)
-    hi = scale_polygon(pts, px, py, 0.40)
+    apply_gradient_to_poly(canvas, pts, PETAL_BASE, PETAL_TIP)
+    hi = scale_polygon(pts, px, py, 0.35)
     cv2.fillPoly(canvas, [pts_to_np(hi)], PETAL_TIP)
 
 
 def _petal_back(canvas, px, py, length, width, angle):
     pts = curved_petal_polygon(px, py, length, width, angle,
-                               curvature=0.10, n_pts=32)
+                               curvature=0.02, n_pts=32)
     shadow_pts = scale_polygon(pts, px, py, 1.07)
     cv2.fillPoly(canvas, [pts_to_np(shadow_pts)], PETAL_SHADOW)
     apply_gradient_to_poly(canvas, pts, PETAL_BACK, PETAL_MID)
 
 
-def _bracts(canvas, cx, cy, disc_r, petal_len, n=16):
-    blen = int(petal_len * 1.12)
-    bw   = int(disc_r * 0.30)
+def _bracts(canvas, cx, cy, disc_r, petal_len, n=13):
+    blen = int(petal_len * 0.85)
+    bw   = int(disc_r * 0.22)
     for i in range(n):
         angle = 2 * math.pi * i / n + math.pi / n
         pts = curved_petal_polygon(cx, cy, blen, bw, angle,
-                                   curvature=0.06, n_pts=24)
-        shadow = scale_polygon(pts, cx, cy, 1.05)
+                                   curvature=0.03, n_pts=20)
+        shadow = scale_polygon(pts, cx, cy, 1.04)
         cv2.fillPoly(canvas, [pts_to_np(shadow)], BRACT_DARK)
         apply_gradient_to_poly(canvas, pts, BRACT_BASE, BRACT_TIP)
 
@@ -84,10 +84,10 @@ def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
 
     # Sizes at target resolution (will be 3x inside big canvas)
     base_r    = int(scale * 110)
-    disc_r    = max(14, int(base_r * 0.42 * (0.22 + 0.78 * bloom)))
+    disc_r    = max(14, int(base_r * 0.48 * (0.22 + 0.78 * bloom)))
     petal_len = max(8,  int(base_r * 0.85 * (0.15 + 0.85 * bloom)))
-    # Petal width: substantial fraction of petal length for broad look
-    petal_w   = max(6,  int(petal_len * 0.44))
+    # Narrow strap-like petals to match real sunflower proportions
+    petal_w   = max(5,  int(petal_len * 0.28))
     n_petals  = 21  # Fibonacci count
 
     S = 3

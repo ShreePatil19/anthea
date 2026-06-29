@@ -62,19 +62,14 @@ def _build_tepal_outline(cx, cy, length, half_width, angle, recurve):
     cos_a = math.cos(angle)
 
     # Spine as cubic Bezier.
-    # The tepal sweeps outward to ~0.75*length then gently recurves at the tip.
-    # Even at full recurve the tip stays out at ~0.80 length from centre.
+    # Tepal goes outward to max then recurves BACKWARD (tip toward stem base).
+    # This gives the distinctive hockey-stick backward curve of Lycoris radiata.
     p0 = (cx, cy)
-    # First control: outward along angle direction
-    p1 = (cx + sin_a * length * 0.40, cy - cos_a * length * 0.40)
-    # Second control: mostly outward, with perpendicular curl for recurve shape
-    perp_x =  cos_a  # perpendicular to outward direction
-    perp_y =  sin_a
-    p2 = (cx + sin_a * length * 0.80 + perp_x * recurve * length * 0.22,
-          cy - cos_a * length * 0.80 + perp_y * recurve * length * 0.22)
-    # Tip: outward but tip curves back slightly via perpendicular offset
-    p3 = (cx + sin_a * length * 0.90 + perp_x * recurve * length * 0.30,
-          cy - cos_a * length * 0.90 + perp_y * recurve * length * 0.30)
+    p1 = (cx + sin_a * length * 0.50, cy - cos_a * length * 0.50)
+    p2 = (cx + sin_a * length * 0.90, cy - cos_a * length * 0.90)
+    # Tip pulls back toward centre: recurve controls how far back
+    p3 = (cx + sin_a * length * (0.90 - recurve * 0.52),
+          cy - cos_a * length * (0.90 - recurve * 0.52))
 
     spine = bezier_cubic(p0, p1, p2, p3, steps=36)
 
@@ -117,10 +112,10 @@ def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
     bloom   = max(0.0, min(1.0, bloom))
     variant = (opts or {}).get("variant", "scarlet")
 
-    # Tepal length: long and graceful
+    # Tepal length: long and graceful; half_width wider for substance
     tepal_len    = int(scale * 135 * (0.22 + 0.78 * bloom))
-    half_width   = max(5, int(scale * 13))
-    stamen_len   = int(tepal_len * (1.45 + 0.15 * bloom))
+    half_width   = max(8, int(scale * 22))
+    stamen_len   = int(tepal_len * (1.30 + 0.10 * bloom))
     recurve      = 0.45 + 0.45 * bloom   # 0.45 at bud, 0.90 at full open
 
     c_base, c_deep, c_mid, c_shadow, c_hilight = _tepal_colours(variant)
@@ -177,9 +172,9 @@ def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
         np_fil  = pts_to_np(fil_pts).reshape((-1, 1, 2))
 
         # Shadow filament
-        cv2.polylines(big, [np_fil], False, c_shadow, 4, cv2.LINE_AA)
+        cv2.polylines(big, [np_fil], False, c_shadow, 6, cv2.LINE_AA)
         # Main filament
-        cv2.polylines(big, [np_fil], False, s_col, 2, cv2.LINE_AA)
+        cv2.polylines(big, [np_fil], False, s_col, 3, cv2.LINE_AA)
 
         # Anther at tip: small elongated ellipse
         tip_x, tip_y = int(p3[0]), int(p3[1])
