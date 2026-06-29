@@ -1,7 +1,7 @@
 """
 Blue rose renderer.
-Viewed from slightly above: overlapping teardrop petals in concentric rings.
-Outer ring open/cupped, inner rings furled. Clearly vivid blue.
+Viewed from slightly above: overlapping cupped petals in concentric rings.
+Highlights stay vivid cerulean blue, never white.
 draw(canvas, cx, cy, bloom, scale, t, opts) is the public interface.
 """
 import math
@@ -14,18 +14,20 @@ from util import (
     gradient_circle_hsv, curved_petal_polygon,
 )
 
-# Deep vivid blue palette (BGR)
-DEEP    = hsv_to_bgr(118, 250, 150)   # deep indigo-blue
-MID     = hsv_to_bgr(116, 235, 200)   # medium blue
-EDGE    = hsv_to_bgr(112, 200, 245)   # cerulean lighter edge
-HILIGHT = hsv_to_bgr(108,  55, 255)   # dewy pale highlight
-SHADOW  = hsv_to_bgr(123, 255,  40)   # very dark navy shadow
+# Vivid cobalt blue palette
+DEEP    = hsv_to_bgr(118, 252, 138)   # deep indigo shadow
+MID     = hsv_to_bgr(116, 240, 198)   # medium cobalt
+EDGE    = hsv_to_bgr(112, 200, 248)   # cerulean lighter edge
+SHADOW  = hsv_to_bgr(124, 255,  32)   # near-black navy shadow
 SEPAL   = hsv_to_bgr( 80, 170,  78)
-SEPAL_D = hsv_to_bgr( 76, 188,  40)
+SEPAL_D = hsv_to_bgr( 76, 190,  40)
 
 
-def _petal_pts(cx, cy, r_base, length, half_w, angle, n=24):
-    """Teardrop rose petal from r_base outward along angle direction."""
+def _petal_pts(cx, cy, r_base, length, half_w, angle, n=30):
+    """
+    Rose petal from r_base outward. Wider in the upper half (cupped profile).
+    Both sides traced independently so the polygon closes at tip and base.
+    """
     sin_a = math.sin(angle)
     cos_a = math.cos(angle)
     perp_x = cos_a
@@ -35,14 +37,14 @@ def _petal_pts(cx, cy, r_base, length, half_w, angle, n=24):
     pts = []
     for i in range(n + 1):
         t = i / n
-        # Narrow at base, widest ~38% along, tapers to point at tip
-        w = half_w * math.sin(min(t * 2.6, math.pi))
+        # Cupped rose profile: narrows at base, broad from 25% to 75%, tapers to tip
+        w = half_w * math.sin(min(t * 2.0, math.pi))
         sx = bx + sin_a * length * t
         sy = by - cos_a * length * t
         pts.append((sx - perp_x * w, sy - perp_y * w))
     for i in range(n, -1, -1):
         t = i / n
-        w = half_w * math.sin(min(t * 2.6, math.pi))
+        w = half_w * math.sin(min(t * 2.0, math.pi))
         sx = bx + sin_a * length * t
         sy = by - cos_a * length * t
         pts.append((sx + perp_x * w, sy + perp_y * w))
@@ -50,21 +52,23 @@ def _petal_pts(cx, cy, r_base, length, half_w, angle, n=24):
 
 
 def _draw_petal(canvas, cx, cy, r_base, length, half_w, angle,
-                c_base, c_mid, c_edge, c_shadow, c_hilight):
+                c_base, c_mid, c_shadow, c_hilight):
     pts = _petal_pts(cx, cy, r_base, length, half_w, angle)
-    # Dark shadow behind (enlarged from flower centre)
+
+    # Dark shadow ring: scaled outward from flower centre
     shadow = [(cx + (x - cx) * 1.06, cy + (y - cy) * 1.06) for x, y in pts]
     cv2.fillPoly(canvas, [pts_to_np(shadow)], c_shadow)
-    # Base fill
-    cv2.fillPoly(canvas, [pts_to_np(pts)], c_base)
-    # Outer ~55% of petal slightly lighter
-    outer = _petal_pts(cx, cy, r_base + length * 0.45, length * 0.56,
-                       int(half_w * 0.88), angle)
-    cv2.fillPoly(canvas, [pts_to_np(outer)], c_mid)
-    # Small highlight near tip
-    hi = _petal_pts(cx, cy, r_base + length * 0.68, length * 0.26,
-                    int(half_w * 0.36), angle)
-    cv2.fillPoly(canvas, [pts_to_np(hi)], c_hilight)
+
+    # Main petal fill with gradient base to mid
+    apply_gradient_to_poly(canvas, pts, c_base, c_mid)
+
+    # Highlight: a softer, subtly lighter blue band toward the upper petal face.
+    # Applied with addWeighted so it blends rather than overpainting opaquely.
+    hi = _petal_pts(cx, cy, r_base + length * 0.32, length * 0.52,
+                    max(4, int(half_w * 0.52)), angle)
+    hi_overlay = np.zeros_like(canvas)
+    cv2.fillPoly(hi_overlay, [pts_to_np(hi)], c_hilight)
+    cv2.addWeighted(canvas, 1.0, hi_overlay, 0.42, 0, canvas)
 
 
 def _sepal(canvas, cx, cy, radius):
@@ -78,13 +82,14 @@ def _sepal(canvas, cx, cy, radius):
 
 
 # Ring spec: (n_petals, r_base_frac, length_frac, half_w_frac, bloom_thresh, rot)
-# Wide half_w_frac ensures heavy petal overlap for rose-like look
+# Golden angle (2.399 rad = 137.5 deg) rotation per ring creates organic spiral.
+_GA = 2.3998  # golden angle in radians
 RINGS = [
-    (8, 0.48, 0.52, 0.44, 0.00, 0.00),   # outermost: wide overlapping
-    (7, 0.28, 0.44, 0.38, 0.10, 0.40),   # mid-outer
-    (6, 0.15, 0.33, 0.32, 0.28, 0.82),   # mid-inner
-    (5, 0.06, 0.22, 0.26, 0.50, 1.22),   # inner
-    (4, 0.02, 0.12, 0.20, 0.70, 1.65),   # tight core
+    (11, 0.44, 0.58, 0.46, 0.00, 0.000),         # outermost
+    ( 9, 0.28, 0.48, 0.42, 0.08, _GA),            # 137.5 deg
+    ( 7, 0.15, 0.36, 0.38, 0.26, _GA * 2),        # 275 deg
+    ( 5, 0.06, 0.24, 0.30, 0.48, _GA * 3),        # 412.5 deg
+    ( 4, 0.02, 0.13, 0.22, 0.68, _GA * 4),        # 550 deg
 ]
 
 
@@ -114,27 +119,29 @@ def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
         if layer_bloom < 0.02:
             continue
 
-        open_s  = 0.25 + 0.75 * layer_bloom
-        r_base  = int(br * r_base_f)
-        length  = max(r_base + 6, int(br * len_f * open_s))
-        half_w  = max(4, int(br * hw_f * open_s))
+        open_s = 0.25 + 0.75 * layer_bloom
+        r_base = int(br * r_base_f)
+        length = max(r_base + 6, int(br * len_f * open_s))
+        half_w = max(4, int(br * hw_f * open_s))
 
         # Outer rings cerulean, inner rings deep indigo
-        h_base = int(117 - layer_t * 4)
-        h_mid  = int(114 - layer_t * 3)
-        h_edge = int(111 - layer_t * 2)
-        c_base    = hsv_to_bgr(h_base, 248 - int(layer_t * 14), int(155 + layer_t * 28))
-        c_mid     = hsv_to_bgr(h_mid,  228 - int(layer_t * 10), int(210 + layer_t * 20))
-        c_edge    = hsv_to_bgr(h_edge, 205 - int(layer_t * 8),  int(245 + layer_t * 10))
-        c_shadow  = hsv_to_bgr(122, 255, max(18, int(48 - layer_t * 14)))
-        c_hilight = hsv_to_bgr(109, max(30, int(62 - layer_t * 24)), 255)
+        h_base = int(119 - layer_t * 6)
+        h_mid  = int(115 - layer_t * 3)
+        c_base   = hsv_to_bgr(h_base, 250 - int(layer_t * 20), int(148 + layer_t * 30))
+        c_mid    = hsv_to_bgr(h_mid,  220 - int(layer_t * 12), int(205 + layer_t * 22))
+        # Softer shadow: visible but not near-black, keeps depth without a mosaic look
+        c_shadow = hsv_to_bgr(124, 238, max(28, int(55 - layer_t * 14)))
+        # Highlight must stay clearly BLUE. Minimum saturation 148 to avoid white.
+        hi_s = max(148, int(205 - layer_t * 35))
+        hi_v = int(225 + layer_t * 10)
+        c_hilight = hsv_to_bgr(112, hi_s, hi_v)
 
         for i in range(n):
             angle = 2 * math.pi * i / n + rot
             _draw_petal(big, bcx, bcy, r_base, length, half_w, angle,
-                        c_base, c_mid, c_edge, c_shadow, c_hilight)
+                        c_base, c_mid, c_shadow, c_hilight)
 
-    # Tight centre
+    # Tight furled centre
     cr = max(5, int(br * 0.055))
     gradient_circle_hsv(big, bcx, bcy, cr + 2, MID, SHADOW, steps=8)
 
