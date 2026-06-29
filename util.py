@@ -185,6 +185,32 @@ def blend_layer(base, overlay, alpha):
     cv2.addWeighted(overlay, alpha, base, 1 - alpha, 0, base)
 
 
+def composite_soft(canvas, layer, mask, blur, alpha):
+    """
+    Blur a BGR `layer` and its single-channel coverage `mask`, then
+    alpha-composite the result onto canvas in place. Used for soft shadows
+    and soft highlights that read as depth rather than hard plastic fills.
+    """
+    if blur % 2 == 0:
+        blur += 1
+    layer_b = cv2.GaussianBlur(layer, (blur, blur), 0)
+    mask_b = cv2.GaussianBlur(mask, (blur, blur), 0).astype(np.float32) / 255.0
+    mask_b *= alpha
+    m3 = mask_b[:, :, None]
+    out = canvas.astype(np.float32) * (1.0 - m3) + layer_b.astype(np.float32) * m3
+    np.copyto(canvas, out.astype(np.uint8))
+
+
+def jitter(idx, amp):
+    """Deterministic pseudo-random offset in [-amp, amp] from an integer index.
+
+    Avoids Math.random so renders are reproducible frame to frame.
+    """
+    s = math.sin(idx * 12.9898) * 43758.5453
+    frac = s - math.floor(s)
+    return (frac * 2.0 - 1.0) * amp
+
+
 def apply_gradient_to_poly(canvas, pts, bgr_base, bgr_tip, axis='y'):
     """
     Fill a polygon with a linear gradient along the given axis.

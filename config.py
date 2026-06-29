@@ -14,6 +14,12 @@ mirror = True                   # selfie view
 show_hud = True
 bloom_driver = "openness"       # "openness" or "pinch"
 
+# Garden (multiple flowers controlled by finger count)
+max_flowers = 5                 # cap on simultaneous flowers
+flower_spacing = 150            # base horizontal gap between flowers (px at scale 1)
+count_hold_seconds = 0.25       # finger count must hold this long before it takes
+arc_dip = 22                    # px the outer flowers sit below the centre one
+
 # Wind sway
 sway_amplitude = 0.018          # radians peak
 sway_speed = 0.7                # Hz
