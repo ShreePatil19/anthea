@@ -34,6 +34,34 @@ No game, no score, no timer, no plucking. Three flowers, each rendered from math
 - No game engine, no image assets, no 3D files. Every petal, stem, and leaf is
   drawn with `cv2.fillPoly`, `cv2.polylines`, and `cv2.addWeighted`.
 
+## Rendering quality, technique, and provenance
+
+Quality is the priority for this project. Spend the effort to make the flowers look
+beautiful, not merely correct. Use these proven procedural techniques (build your own
+clean implementations in `util.py`, do not copy third party files verbatim):
+
+- A `curved_petal_polygon(cx, cy, length, width, angle, curvature)` helper that returns
+  a smooth petal outline with many points (aim for 24+ points per petal so curves are
+  smooth, not faceted).
+- A `scale_polygon(points, cx, cy, factor)` helper to draw inner color layers.
+- Per petal layering: a slightly enlarged dark copy behind for a soft shadow, the main
+  fill, then one or two smaller lighter copies on top for a gradient and a highlight.
+- `gradient_circle` for flower centres, and fine `cv2.line` plus `cv2.ellipse` for
+  stamens and anthers. Everything anti aliased with `cv2.LINE_AA`.
+- Composite each finished flower with `cv2.addWeighted` so edges are soft.
+- Colours are BGR (OpenCV order). Interpolate palettes in HSV for smooth, natural
+  gradients rather than flat fills.
+
+Provenance and credit: the approach above is informed by public reference projects,
+chiefly saud-26/Garden-in-Bloom (procedural OpenCV flowers), barmoshe/bloom-garden,
+and misalavinash/flower-generator. Write original code, then add a `CREDITS.md` that
+thanks these projects as design references and links them. Do not copy their source
+files verbatim, since at least one declares MIT in its README but ships no LICENSE
+file, so provenance is unclear. Original work plus credit keeps this repo clean.
+
+Aim to exceed the references: real golden angle seed packing, an anatomically correct
+spider lily, and smooth HSV gradients are the upgrades that make anthea superior.
+
 ## The three flowers (render each as its own module under `flowers/`)
 
 Each flower module exposes `draw(canvas, cx, cy, bloom, scale, t, opts)` where
@@ -42,24 +70,36 @@ in seconds for gentle wind sway. Render in three passes (soft shadow, main fill,
 highlight) with alpha blending so the shapes look hand painted, not flat.
 
 1. **Sunflower** (`flowers/sunflower.py`)
-   - Large central disc with seeds packed on a Fibonacci spiral (golden angle
-     137.5 degrees).
-   - Two rings of long golden yellow ray petals around the disc.
+   - Central disc with REAL golden angle seed packing: place 180 to 260 seeds using
+     r = c*sqrt(n), theta = n*137.507 degrees. Seed dot size and colour grade from
+     small dark brown at the centre to slightly larger golden brown at the rim.
+   - Two offset rows of long golden ray petals (about 21 to 34, a Fibonacci count)
+     with slightly notched tips, the back row peeking between the front row.
    - Green bracts behind the petals.
-   - Palette: warm yellow, amber, deep brown centre.
+   - `bloom` raises petal length and disc size from a tight green bud to full open.
+   - Palette: warm yellow into amber petals, deep brown to near black disc gradient.
 
 2. **Blue rose** (`flowers/blue_rose.py`)
-   - 3 concentric rings of overlapping curved petals spiralling inward, petals get
-     smaller toward the centre.
-   - Green sepals at the base.
-   - `bloom` controls how far the outer petals unfurl.
-   - Palette: deep blue into violet, with lighter cool blue petal edges.
+   - 4 layers of cupped, overlapping curved petals (about 5 outer, 5 mid, 5 inner,
+     3 furled core), each layer rotated so petals nest in the gaps of the layer below
+     and get smaller and more closed toward the centre.
+   - Each petal carries an HSV gradient from a deep blue base to a lighter cool blue
+     or violet edge, plus a soft dewy highlight near the top.
+   - Green sepals at the base. `bloom` controls how far the outer layers unfurl, the
+     core stays furled until bloom is high.
+   - Palette: deep blue into violet, cool blue edges. Keep it clearly blue, not purple.
 
-3. **Spider lily** (`flowers/spider_lily.py`), Lycoris radiata
-   - 5 or 6 very thin, strongly recurved (bent back) petals with wavy edges.
-   - Extremely long, arching stamens that protrude well past the petals, this is the
-     signature feature, do not omit it.
-   - Palette: crimson and scarlet. Add a `variant` option in `opts` for a white form.
+3. **Spider lily** (`flowers/spider_lily.py`), Lycoris radiata, the signature flower
+   - 6 very thin, strongly recurved (bent back) tepals with WAVY, crinkled edges,
+     radiating evenly. Petals are narrow and long, nothing like a rounded lily petal.
+   - 6 extremely long, arching stamens that protrude far past the tepals (about 1.3
+     to 1.6 times the petal length), each a thin curved filament tipped with a small
+     anther. These long spidery stamens are the defining feature, make them prominent
+     and graceful, do not shorten them.
+   - `bloom` drives how far the tepals recurve and how far the stamens extend, from a
+     closed cluster to the full open spider shape.
+   - Palette: vivid scarlet and crimson. Add a `variant` option in `opts` for a pure
+     white form (Lycoris albiflora).
 
 A shared `flowers/stem.py` draws a curved stem (cubic Bezier from the bottom of the
 frame up to the flower, with a small random lateral bow and time based sway) plus one
@@ -117,6 +157,7 @@ flowers/
   stem.py
 requirements.txt
 selftest.py          # headless render check, see Verification
+CREDITS.md           # design references and thanks, see provenance section
 ```
 
 ## config.py tunables
@@ -180,5 +221,9 @@ and FPS. A one line gesture hint on screen at startup.
   all three distinct flowers at several bloom and scale steps.
 - The three flowers are visually distinct in shape and palette, and the spider lily
   has its long protruding stamens.
+- The renderers are original code (not copied verbatim from the reference repos) and
+  `CREDITS.md` thanks and links the design references.
+- Rendering looks polished: smooth petal curves, soft shadows, HSV gradients, anti
+  aliased edges. Plain flat shapes are not acceptable, this is a gift.
 - `python main.py --demo` is written so it would animate without a camera or display.
 - One open PR titled "anthea nightly build" with an honest verification note.
