@@ -217,6 +217,111 @@ def apply_gradient_to_poly(canvas, pts, bgr_base, bgr_tip, axis='y'):
     np.copyto(canvas, grad, where=(mask3 > 0))
 
 
+def apply_gradient_to_poly_dir(canvas, pts, bgr_base, bgr_tip, angle):
+    """
+    Fill a polygon with a gradient along the flower-direction angle.
+    angle=0 is up, pi/2 is right (screen y increases downward).
+    bgr_base at the near-center end, bgr_tip at the far end.
+    Efficient: operates only on the polygon bounding box.
+    """
+    np_pts = pts_to_np(pts)
+    if len(np_pts) < 3:
+        return
+    h_can, w_can = canvas.shape[:2]
+    y_min = max(0, int(np_pts[:, 1].min()))
+    y_max = min(h_can - 1, int(np_pts[:, 1].max()))
+    x_min = max(0, int(np_pts[:, 0].min()))
+    x_max = min(w_can - 1, int(np_pts[:, 0].max()))
+    if y_max < y_min or x_max < x_min:
+        return
+
+    box_h = y_max - y_min + 1
+    box_w = x_max - x_min + 1
+    offset_pts = np_pts.copy()
+    offset_pts[:, 0] -= x_min
+    offset_pts[:, 1] -= y_min
+    mask = np.zeros((box_h, box_w), dtype=np.uint8)
+    cv2.fillPoly(mask, [offset_pts], 255)
+    pixels_in = mask > 0
+    if not pixels_in.any():
+        return
+
+    sin_a = math.sin(angle)
+    cos_a = math.cos(angle)
+    ys = (np.arange(box_h, dtype=np.float32) + y_min)[:, np.newaxis]
+    xs = (np.arange(box_w, dtype=np.float32) + x_min)[np.newaxis, :]
+    # Projection increases from near-center (base) to far-from-center (tip)
+    proj = xs * sin_a + ys * (-cos_a)
+
+    relevant = proj[pixels_in]
+    p_min = float(relevant.min())
+    p_max = float(relevant.max())
+    if p_max <= p_min:
+        box = canvas[y_min:y_max + 1, x_min:x_max + 1]
+        box[pixels_in] = bgr_base
+        return
+
+    t_map = np.clip((proj - p_min) / (p_max - p_min), 0.0, 1.0)
+    b1, g1, r1 = float(bgr_base[0]), float(bgr_base[1]), float(bgr_base[2])
+    b2, g2, r2 = float(bgr_tip[0]), float(bgr_tip[1]), float(bgr_tip[2])
+    b_ch = np.clip(b1 + (b2 - b1) * t_map, 0, 255).astype(np.uint8)
+    g_ch = np.clip(g1 + (g2 - g1) * t_map, 0, 255).astype(np.uint8)
+    r_ch = np.clip(r1 + (r2 - r1) * t_map, 0, 255).astype(np.uint8)
+    grad_patch = np.stack([b_ch, g_ch, r_ch], axis=2)
+    box = canvas[y_min:y_max + 1, x_min:x_max + 1]
+    np.copyto(box, grad_patch, where=pixels_in[:, :, np.newaxis])
+
+
+def apply_gradient_radial(canvas, pts, bgr_inner, bgr_outer, cx, cy):
+    """
+    Fill a polygon with a radial gradient based on distance from (cx, cy).
+    bgr_inner at the closest point to center, bgr_outer at the farthest.
+    """
+    np_pts = pts_to_np(pts)
+    if len(np_pts) < 3:
+        return
+    h_can, w_can = canvas.shape[:2]
+    y_min = max(0, int(np_pts[:, 1].min()))
+    y_max = min(h_can - 1, int(np_pts[:, 1].max()))
+    x_min = max(0, int(np_pts[:, 0].min()))
+    x_max = min(w_can - 1, int(np_pts[:, 0].max()))
+    if y_max < y_min or x_max < x_min:
+        return
+
+    box_h = y_max - y_min + 1
+    box_w = x_max - x_min + 1
+    offset_pts = np_pts.copy()
+    offset_pts[:, 0] -= x_min
+    offset_pts[:, 1] -= y_min
+    mask = np.zeros((box_h, box_w), dtype=np.uint8)
+    cv2.fillPoly(mask, [offset_pts], 255)
+    pixels_in = mask > 0
+    if not pixels_in.any():
+        return
+
+    ys = (np.arange(box_h, dtype=np.float32) + y_min)[:, np.newaxis]
+    xs = (np.arange(box_w, dtype=np.float32) + x_min)[np.newaxis, :]
+    dist = np.sqrt((xs - cx) ** 2 + (ys - cy) ** 2)
+
+    relevant = dist[pixels_in]
+    d_min = float(relevant.min())
+    d_max = float(relevant.max())
+    if d_max <= d_min:
+        box = canvas[y_min:y_max + 1, x_min:x_max + 1]
+        box[pixels_in] = bgr_inner
+        return
+
+    t_map = np.clip((dist - d_min) / (d_max - d_min), 0.0, 1.0)
+    b1, g1, r1 = float(bgr_inner[0]), float(bgr_inner[1]), float(bgr_inner[2])
+    b2, g2, r2 = float(bgr_outer[0]), float(bgr_outer[1]), float(bgr_outer[2])
+    b_ch = np.clip(b1 + (b2 - b1) * t_map, 0, 255).astype(np.uint8)
+    g_ch = np.clip(g1 + (g2 - g1) * t_map, 0, 255).astype(np.uint8)
+    r_ch = np.clip(r1 + (r2 - r1) * t_map, 0, 255).astype(np.uint8)
+    grad_patch = np.stack([b_ch, g_ch, r_ch], axis=2)
+    box = canvas[y_min:y_max + 1, x_min:x_max + 1]
+    np.copyto(box, grad_patch, where=pixels_in[:, :, np.newaxis])
+
+
 # ---------------------------------------------------------------------------
 # Exponential Moving Average (adaptive)
 # ---------------------------------------------------------------------------
