@@ -165,6 +165,20 @@ def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
                           max(2, int(1.4 * scale * SS)), cv2.LINE_AA)
             cv2.addWeighted(overlay, 0.55, big, 0.45, 0, big)
 
+            # Soft dewy highlight near the top of petals facing the light
+            if li < 2 and k < 0.55:
+                ha = th0 - half_ang * 0.25
+                hr = r0 + (rr1 - r0) * 0.68
+                hx = bcx + math.cos(ha) * hr
+                hy = bcy + math.sin(ha) * hr
+                ew = max(2, int((rr1 - r0) * 0.13))
+                eh = max(1, int((rr1 - r0) * 0.06))
+                overlay = big.copy()
+                cv2.ellipse(overlay, (int(hx), int(hy)), (ew, eh),
+                            math.degrees(th0) + 90, 0, 360,
+                            hsv_to_bgr(103, 45, 255), -1, cv2.LINE_AA)
+                cv2.addWeighted(overlay, 0.22, big, 0.78, 0, big)
+
     # Furled spiral core, opens only at high bloom
     core_r = br * 0.22 * (0.6 + 0.4 * ease)
     core_open = max(0.0, (bloom - 0.55) / 0.45)

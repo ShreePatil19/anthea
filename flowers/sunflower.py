@@ -41,10 +41,12 @@ def _jit(i, k=1.0):
 
 
 def _ray_petal(canvas, bx, by, length, max_hw, angle, bow,
-               c_base, c_mid, c_tip, crease_col, n=30, cast_shadow=False):
+               c_base, c_mid, c_tip, crease_col, n=30, cast_shadow=False,
+               notch=False):
     """
     One strap-like ray petal from (bx,by) outward along angle.
     Gradient follows the petal spine; 3 crease lines run along it.
+    notch=True gives the tip a small V split instead of a single point.
     """
     ox, oy = math.sin(angle), -math.cos(angle)
     lx, ly = math.cos(angle),  math.sin(angle)
@@ -58,7 +60,10 @@ def _ray_petal(canvas, bx, by, length, max_hw, angle, bow,
 
     def hw(t):
         env = (t ** 0.40) * ((1 - t) ** 0.85)
-        return max_hw * env / 0.325   # normalise peak to ~1
+        w = max_hw * env / 0.325   # normalise peak to ~1
+        if notch and t > 0.86:
+            w = max(w, max_hw * 0.24 * (1.0 - (t - 0.86) / 0.14 * 0.45))
+        return w
 
     left, right = [], []
     for j, (sx, sy) in enumerate(spine):
@@ -75,7 +80,10 @@ def _ray_petal(canvas, bx, by, length, max_hw, angle, bow,
         w = hw(t)
         left.append((sx - px * w, sy - py * w))
         right.append((sx + px * w, sy + py * w))
-    outline = left + list(reversed(right))
+    if notch:
+        outline = left + [spine[int(n * 0.90)]] + list(reversed(right))
+    else:
+        outline = left + list(reversed(right))
     np_out = pts_to_np(outline)
 
     if cast_shadow:
@@ -149,6 +157,7 @@ def _disc(canvas, cx, cy, disc_r):
     cv2.addWeighted(overlay, 0.55, canvas, 0.45, 0, canvas)
     gradient_circle_hsv(canvas, cx, cy, int(disc_r), DISC_RIM, DISC_CORE, steps=26)
 
+    # Seeds as small oriented ellipses so the spiral lattice reads
     n = 300
     for k in range(1, n + 1):
         r_frac = math.sqrt(k / n)
@@ -156,12 +165,19 @@ def _disc(canvas, cx, cy, disc_r):
         theta = math.radians(k * GOLDEN_ANGLE)
         sx = cx + r * math.cos(theta)
         sy = cy + r * math.sin(theta)
-        dot = max(2, int(disc_r * 0.042 * (0.55 + 0.55 * r_frac)))
+        dot = max(2, int(disc_r * 0.048 * (0.55 + 0.55 * r_frac)))
         col = lerp_hsv(SEED_DARK, SEED_GOLD, r_frac ** 1.4)
         vjit = int(14 * _jit(k))
         col = tuple(int(np.clip(c + vjit, 0, 255)) for c in col)
-        cv2.circle(canvas, (int(round(sx)), int(round(sy))), dot,
-                   col, -1, cv2.LINE_AA)
+        ori = math.degrees(theta) + 28
+        cv2.ellipse(canvas, (int(round(sx)), int(round(sy))),
+                    (dot, max(1, int(dot * 0.62))), ori, 0, 360,
+                    col, -1, cv2.LINE_AA)
+        if r_frac > 0.35:
+            hi = lerp_hsv(col, SEED_GOLD, 0.5)
+            cv2.ellipse(canvas, (int(round(sx - dot * 0.25)), int(round(sy - dot * 0.25))),
+                        (max(1, int(dot * 0.4)), max(1, int(dot * 0.22))), ori, 0, 360,
+                        hi, -1, cv2.LINE_AA)
 
     # Ring of bright open florets near the rim
     n_fl = 42
@@ -234,7 +250,7 @@ def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
             by = bcy - (bdisc * 0.88) * math.cos(angle)
             _ray_petal(big, bx, by, L, max_hw, angle,
                        _jit(i, 2.0), P_BASE, P_MID, P_TIP, P_CREASE,
-                       cast_shadow=True)
+                       cast_shadow=True, notch=(_jit(i, 8.0) > -0.1))
 
     _disc(big, bcx, bcy, bdisc)
 
