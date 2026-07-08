@@ -28,7 +28,7 @@ floret ring.
 | Edge and curve quality (10)      |   9   | Supersampled, pointed lanceolate tips, no faceting |
 | Bloom dynamics (10)              |   9   | Green wrapped bud opens to full disc convincingly |
 | Beauty (5)                       |   4   |                                                    |
-| **Overall**                      | **85**|                                                    |
+| **Overall**                      | **83**|                                                    |
 
 ## Blue Rose (refs/blue_rose.jpg)
 
