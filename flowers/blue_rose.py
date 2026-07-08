@@ -1,9 +1,10 @@
 """
 Blue rose renderer.
-Viewed from slightly above: overlapping cupped petals in concentric rings,
-graduating from deep indigo at the base to bright cerulean at the tips.
-Direction-aware gradients give each petal realistic colour flow.
-draw(canvas, cx, cy, bloom, scale, t, opts) is the public interface.
+Golden angle spiral of overlapping cupped petals, like a real rose seen from
+slightly above: innermost petals furled and dark, outer petals broad and
+bright. A global light direction shades each petal; soft ambient occlusion
+darkens the core. draw(canvas, cx, cy, bloom, scale, t, opts) is the
+public interface.
 """
 import math
 import cv2
@@ -13,7 +14,19 @@ from util import (
     pts_to_np, scale_polygon, apply_gradient_to_poly_dir,
     lerp_colour, lerp_hsv, hsv_to_bgr,
     gradient_circle_hsv, curved_petal_polygon,
+    shade_bgr, light_factor, darken_center,
 )
+
+GOLDEN_ANGLE = math.radians(137.507764)
+
+# 3/4 viewing angle: vertical compression of the flower head
+SQUASH = 0.82
+
+
+def _foreshorten(angle):
+    s = math.sin(angle)
+    c = math.cos(angle)
+    return math.sqrt(s * s + (SQUASH * c) ** 2)
 
 # Palette: vivid cobalt, clearly blue (H 112-120 range, never purple)
 DEEP    = hsv_to_bgr(120, 255,  90)   # near-black deep navy (base shadows)
@@ -69,10 +82,11 @@ def _draw_petal(canvas, cx, cy, r_base, length, half_w, angle,
     hi = _petal_pts(cx, cy, r_base + length * 0.84, length * 0.13,
                     max(2, int(half_w * 0.10)), angle)
     cv2.fillPoly(canvas, [pts_to_np(hi)], c_hilight)
-    # Crease shadow on inner edge of each petal (simulates cupped shape)
-    crease_pts = _petal_pts(cx, cy, r_base, length * 0.85,
-                            max(2, int(half_w * 0.08)), angle)
-    cv2.fillPoly(canvas, [pts_to_np(crease_pts)], c_shadow)
+    # Crease along inner edge of each petal (simulates cupped shape);
+    # uses the dark petal colour, not black, so it reads as a fold not a mark
+    crease_pts = _petal_pts(cx, cy, r_base, length * 0.60,
+                            max(2, int(half_w * 0.06)), angle)
+    cv2.fillPoly(canvas, [pts_to_np(crease_pts)], c_dark)
 
 
 def _sepal(canvas, cx, cy, radius):
@@ -85,15 +99,8 @@ def _sepal(canvas, cx, cy, radius):
         cv2.fillPoly(canvas, [pts_to_np(pts)], SEPAL)
 
 
-# Ring spec: (n_petals, r_base_frac, length_frac, half_w_frac, bloom_thresh, rot)
-# Wider petals and more per outer ring for proper coverage and a rose-like look
-RINGS = [
-    (10, 0.46, 0.54, 0.50, 0.00, 0.00),   # outermost: 10 wide petals
-    ( 8, 0.27, 0.46, 0.44, 0.08, 0.38),   # mid-outer
-    ( 6, 0.14, 0.34, 0.38, 0.26, 0.80),   # mid-inner
-    ( 5, 0.06, 0.22, 0.30, 0.48, 1.22),   # inner
-    ( 4, 0.02, 0.13, 0.22, 0.68, 1.65),   # tight core
-]
+# Spiral petal count: i = 0 is the innermost furled petal
+N_PETALS = 26
 
 
 def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
@@ -109,46 +116,41 @@ def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
 
     _sepal(big, bcx, bcy, int(br * 0.50))
 
-    n_rings = len(RINGS)
+    # Golden angle spiral, drawn outermost first so inner petals sit on top
+    for i in range(N_PETALS - 1, -1, -1):
+        t_i = i / (N_PETALS - 1)          # 0 = innermost, 1 = outermost
+        angle = i * GOLDEN_ANGLE + 0.7 + 0.05 * math.sin(i * 3.1)
 
-    for ring_i, (n, r_base_f, len_f, hw_f, threshold, rot) in enumerate(RINGS):
-        layer_t = ring_i / (n_rings - 1)
-
+        # Outer petals unfurl first; the core stays furled until bloom is high
+        threshold = 0.70 * (1.0 - t_i)
         if bloom <= threshold:
-            layer_bloom = 0.0
-        else:
-            layer_bloom = min(1.0, (bloom - threshold) / max(0.01, 1.0 - threshold))
-
+            continue
+        layer_bloom = min(1.0, (bloom - threshold) / max(0.01, 1.0 - threshold))
         if layer_bloom < 0.02:
             continue
+        open_s = 0.25 + 0.75 * layer_bloom
 
-        open_s  = 0.25 + 0.75 * layer_bloom
-        r_base  = int(br * r_base_f)
-        length  = max(r_base + 6, int(br * len_f * open_s))
-        half_w  = max(4, int(br * hw_f * open_s))
+        fsh = _foreshorten(angle)
+        r_base = int(br * (0.05 + 0.42 * (t_i ** 0.85)) * (0.35 + 0.65 * open_s) * fsh)
+        length = max(8, int(br * (0.16 + 0.40 * t_i) * open_s * fsh))
+        half_w = max(4, int(br * (0.15 + 0.30 * t_i) * open_s))
 
-        # Outer rings cerulean, inner rings deep indigo
-        h_dark = int(120 - layer_t * 2)
-        h_mid  = int(116 - layer_t * 2)
-        h_edge = int(111 - layer_t * 1)
-        sat_d  = min(255, int(252 - layer_t * 12))
-        val_d  = int(130 + layer_t * 40)
-        sat_e  = min(255, int(205 - layer_t * 8))
-        val_e  = int(248 + layer_t * 7)
+        # Inner petals deep and shadowed, outer petals bright cerulean
+        lf = light_factor(angle)
+        c_dark    = shade_bgr(hsv_to_bgr(int(120 - 8 * t_i), 250, int(100 + 60 * t_i)), lf)
+        c_mid     = shade_bgr(hsv_to_bgr(int(116 - 5 * t_i), 232, int(170 + 45 * t_i)), lf)
+        c_edge    = shade_bgr(hsv_to_bgr(int(112 - 2 * t_i), 205, int(200 + 55 * t_i)), lf)
+        c_shadow  = hsv_to_bgr(124, 255, max(14, int(20 + 14 * t_i)))
+        c_hilight = shade_bgr(hsv_to_bgr(111, 155, 212), lf)
 
-        c_dark    = hsv_to_bgr(h_dark, sat_d, val_d)
-        c_mid     = hsv_to_bgr(h_mid,  230,   int(198 + layer_t * 18))
-        c_edge    = hsv_to_bgr(h_edge, sat_e, val_e)
-        c_shadow  = hsv_to_bgr(124, 255, max(14, int(36 - layer_t * 12)))
-        c_hilight = hsv_to_bgr(111, max(140, int(175 - layer_t * 35)), 210)
+        _draw_petal(big, bcx, bcy, r_base, length, half_w, angle,
+                    c_dark, c_mid, c_edge, c_shadow, c_hilight)
 
-        for i in range(n):
-            angle = 2 * math.pi * i / n + rot
-            _draw_petal(big, bcx, bcy, r_base, length, half_w, angle,
-                        c_dark, c_mid, c_edge, c_shadow, c_hilight)
+    # Ambient occlusion: the heart of the rose sits in shadow
+    darken_center(big, bcx, bcy, int(br * 0.50), strength=0.32)
 
-    # Tight centre
-    cr = max(5, int(br * 0.055))
+    # Tight centre, large enough to cover the sepal base
+    cr = max(6, int(br * 0.075))
     gradient_circle_hsv(big, bcx, bcy, cr + 3, MID, SHADOW, steps=10)
 
     out = cv2.resize(big, (W, H), interpolation=cv2.INTER_AREA)

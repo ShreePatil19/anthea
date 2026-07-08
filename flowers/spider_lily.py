@@ -12,6 +12,7 @@ import numpy as np
 from util import (
     pts_to_np, scale_polygon, apply_gradient_radial,
     bezier_cubic, lerp_colour, hsv_to_bgr,
+    shade_bgr, light_factor,
 )
 
 # 15-degree offset so no tepal or stamen points straight down into the stem
@@ -142,12 +143,16 @@ def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
         shadow_pts = scale_polygon(outline, bcx, bcy, 1.08)
         cv2.fillPoly(big, [pts_to_np(shadow_pts)], c_shadow)
 
-        # Radial gradient: crimson at base, vivid scarlet outward
-        apply_gradient_radial(big, outline, c_deep, c_base, bcx, bcy)
+        # Radial gradient: crimson at base, vivid scarlet outward,
+        # shaded by the global light direction
+        lf = light_factor(angle)
+        apply_gradient_radial(big, outline,
+                              shade_bgr(c_deep, lf), shade_bgr(c_base, lf),
+                              bcx, bcy)
 
         # Bright centre stripe (inner 28% scaled)
         hi = scale_polygon(outline, bcx, bcy, 0.28)
-        cv2.fillPoly(big, [pts_to_np(hi)], c_mid)
+        cv2.fillPoly(big, [pts_to_np(hi)], shade_bgr(c_mid, lf))
 
     # --- Draw stamens (in front of tepals) ---
     for i in range(N_STAMENS):

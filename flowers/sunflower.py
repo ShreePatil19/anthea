@@ -10,11 +10,22 @@ import numpy as np
 
 from util import (
     curved_petal_polygon, scale_polygon, pts_to_np,
-    gradient_circle_hsv, lerp_hsv, lerp_colour,
+    gradient_circle_hsv, gradient_ellipse_hsv, lerp_hsv, lerp_colour,
     apply_gradient_to_poly_dir, hsv_to_bgr,
+    shade_bgr, light_factor,
 )
 
 GOLDEN_ANGLE = 137.507764  # degrees
+
+# 3/4 viewing angle: vertical compression of the flower head
+SQUASH = 0.80
+
+
+def _foreshorten(angle):
+    """Length factor for a petal at screen angle under the 3/4 view squash."""
+    s = math.sin(angle)
+    c = math.cos(angle)
+    return math.sqrt(s * s + (SQUASH * c) ** 2)
 
 # Palette: warm golden amber, no lime
 PETAL_BASE    = hsv_to_bgr(24, 235, 245)   # warm amber-gold
@@ -34,20 +45,26 @@ SEED_LIGHT    = hsv_to_bgr(15, 205, 52)
 
 def _petal(canvas, px, py, length, width, angle):
     """One strap-like petal: shadow, direction-gradient fill, centre highlight."""
+    lf = light_factor(angle)
     pts = curved_petal_polygon(px, py, length, width, angle, curvature=0.015, n_pts=36)
     shadow_pts = scale_polygon(pts, px, py, 1.05)
     cv2.fillPoly(canvas, [pts_to_np(shadow_pts)], PETAL_SHADOW)
-    apply_gradient_to_poly_dir(canvas, pts, PETAL_BASE, PETAL_TIP, angle)
+    apply_gradient_to_poly_dir(canvas, pts,
+                               shade_bgr(PETAL_BASE, lf), shade_bgr(PETAL_TIP, lf),
+                               angle)
     # Narrow bright streak down centre
     hi = scale_polygon(pts, px, py, 0.30)
-    cv2.fillPoly(canvas, [pts_to_np(hi)], PETAL_MID)
+    cv2.fillPoly(canvas, [pts_to_np(hi)], shade_bgr(PETAL_MID, lf))
 
 
 def _petal_back(canvas, px, py, length, width, angle):
+    lf = light_factor(angle, lo=0.72, hi=1.04)
     pts = curved_petal_polygon(px, py, length, width, angle, curvature=0.015, n_pts=32)
     shadow_pts = scale_polygon(pts, px, py, 1.07)
     cv2.fillPoly(canvas, [pts_to_np(shadow_pts)], PETAL_SHADOW)
-    apply_gradient_to_poly_dir(canvas, pts, PETAL_BACK, PETAL_MID, angle)
+    apply_gradient_to_poly_dir(canvas, pts,
+                               shade_bgr(PETAL_BACK, lf), shade_bgr(PETAL_MID, lf),
+                               angle)
 
 
 def _bracts(canvas, cx, cy, disc_r, n=14):
@@ -56,22 +73,30 @@ def _bracts(canvas, cx, cy, disc_r, n=14):
     bw   = max(3, int(disc_r * 0.17))
     for i in range(n):
         angle = 2 * math.pi * i / n + math.pi / n
-        pts = curved_petal_polygon(cx, cy, blen, bw, angle, curvature=0.04, n_pts=18)
+        blen_f = int(blen * _foreshorten(angle))
+        pts = curved_petal_polygon(cx, cy, blen_f, bw, angle, curvature=0.04, n_pts=18)
         shadow = scale_polygon(pts, cx, cy, 1.04)
         cv2.fillPoly(canvas, [pts_to_np(shadow)], BRACT_DARK)
         cv2.fillPoly(canvas, [pts_to_np(pts)], BRACT_BASE)
 
 
-def _seeds(canvas, cx, cy, disc_r, n=145):
-    """Golden angle seed packing: small dark seeds, graded brown to golden-brown at rim."""
+def _seeds(canvas, cx, cy, disc_r, n=175):
+    """
+    Golden angle seed packing on the tilted disc: y positions compressed by
+    the 3/4 view squash and each seed lit by its position relative to the light.
+    """
+    inv = 1.0 / math.sqrt(2.0)
     for k in range(1, n + 1):
         r_frac = math.sqrt(k / n)
         r = disc_r * r_frac * 0.92
         theta = math.radians(k * GOLDEN_ANGLE)
         sx = cx + r * math.cos(theta)
-        sy = cy + r * math.sin(theta)
-        dot = max(2, int(disc_r * 0.048 * (0.60 + 0.50 * r_frac)))
+        sy = cy + r * math.sin(theta) * SQUASH
+        dot = max(2, int(disc_r * 0.044 * (0.60 + 0.50 * r_frac)))
         col = lerp_colour(SEED_DARK, SEED_LIGHT, r_frac)
+        # Dome lighting: seeds on the up-left side of the disc catch the light
+        lit = ((cx - sx) * inv + (cy - sy) * inv) / max(1.0, disc_r)
+        col = shade_bgr(col, 1.0 + 0.30 * lit)
         cv2.circle(canvas, (int(round(sx)), int(round(sy))), dot, col, -1, cv2.LINE_AA)
 
 
@@ -101,27 +126,33 @@ def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
         row_off = math.pi / n_petals
         for i in range(n_petals):
             # Small per-petal organic jitter
-            jitter = 0.016 * math.sin(i * 11.3 + 2.7)
+            jitter = 0.028 * math.sin(i * 11.3 + 2.7)
             angle = 2 * math.pi * i / n_petals + row_off + jitter
-            len_j = int(bplen * (1.08 + 0.09 * math.cos(i * 5.1) + 0.04 * math.sin(i * 8.3)))
+            fsh = _foreshorten(angle)
+            len_j = int(bplen * fsh
+                        * (1.08 + 0.09 * math.cos(i * 5.1) + 0.04 * math.sin(i * 8.3)))
             px = bcx + bdisc * math.sin(angle)
-            py = bcy - bdisc * math.cos(angle)
+            py = bcy - bdisc * SQUASH * math.cos(angle)
             _petal_back(big, px, py, len_j, int(bpw * 0.90), angle)
 
     # 3. Front row petals
     if bloom > 0.04:
         for i in range(n_petals):
-            jitter = 0.016 * math.sin(i * 7.9 + 1.1)
+            jitter = 0.028 * math.sin(i * 7.9 + 1.1)
             angle = 2 * math.pi * i / n_petals + jitter
-            len_j = int(bplen * (1.00 + 0.09 * math.cos(i * 3.7) + 0.04 * math.sin(i * 6.1)))
+            fsh = _foreshorten(angle)
+            len_j = int(bplen * fsh
+                        * (1.00 + 0.09 * math.cos(i * 3.7) + 0.04 * math.sin(i * 6.1)))
             px = bcx + bdisc * math.sin(angle)
-            py = bcy - bdisc * math.cos(angle)
+            py = bcy - bdisc * SQUASH * math.cos(angle)
             _petal(big, px, py, len_j, bpw, angle)
 
-    # 4. Disc gradient
-    gradient_circle_hsv(big, bcx, bcy, bdisc + 5, DISC_OUTER, DISC_INNER, steps=28)
+    # 4. Disc: tilted ellipse with the dark centre pushed away from the light
+    gradient_ellipse_hsv(big, bcx, bcy, bdisc + 5, int((bdisc + 5) * SQUASH),
+                         DISC_OUTER, DISC_INNER, steps=28,
+                         off_x=bdisc * 0.12, off_y=bdisc * SQUASH * 0.12)
 
-    # 5. Golden angle seeds
+    # 5. Golden angle seeds on the tilted disc
     _seeds(big, bcx, bcy, int(bdisc * 0.90))
 
     out = cv2.resize(big, (W, H), interpolation=cv2.INTER_AREA)

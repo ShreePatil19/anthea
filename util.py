@@ -323,6 +323,69 @@ def apply_gradient_radial(canvas, pts, bgr_inner, bgr_outer, cx, cy):
 
 
 # ---------------------------------------------------------------------------
+# Global light model
+# ---------------------------------------------------------------------------
+
+# Light comes from the upper left of the frame
+LIGHT_ANGLE = -2.356  # radians, matches a petal pointing up-left
+
+
+def shade_bgr(bgr, f):
+    """Scale a BGR colour by factor f (brightness only, hue preserved)."""
+    return tuple(int(max(0, min(255, c * f))) for c in bgr)
+
+
+def light_factor(angle, lo=0.80, hi=1.14):
+    """
+    Brightness factor for a petal pointing at `angle` (0 = up, pi/2 = right).
+    Petals facing the light are brighter, petals facing away darker.
+    """
+    align = math.cos(angle - LIGHT_ANGLE)
+    t = (align + 1.0) * 0.5
+    return lo + (hi - lo) * t
+
+
+def darken_center(canvas, cx, cy, radius, strength=0.30):
+    """
+    Soft ambient occlusion: darken pixels near (cx, cy) with a smooth radial
+    falloff. strength is the max darkening at the very centre.
+    """
+    h_can, w_can = canvas.shape[:2]
+    r = int(radius)
+    y0 = max(0, int(cy) - r)
+    y1 = min(h_can, int(cy) + r + 1)
+    x0 = max(0, int(cx) - r)
+    x1 = min(w_can, int(cx) + r + 1)
+    if y1 <= y0 or x1 <= x0:
+        return
+    ys = np.arange(y0, y1, dtype=np.float32)[:, np.newaxis]
+    xs = np.arange(x0, x1, dtype=np.float32)[np.newaxis, :]
+    dist = np.sqrt((xs - cx) ** 2 + (ys - cy) ** 2)
+    fall = np.clip(1.0 - dist / radius, 0.0, 1.0)
+    factor = 1.0 - strength * (fall ** 1.5)
+    box = canvas[y0:y1, x0:x1].astype(np.float32)
+    box *= factor[:, :, np.newaxis]
+    canvas[y0:y1, x0:x1] = np.clip(box, 0, 255).astype(np.uint8)
+
+
+def gradient_ellipse_hsv(canvas, cx, cy, rx, ry, inner_bgr, outer_bgr,
+                         steps=18, off_x=0.0, off_y=0.0):
+    """
+    Elliptical radial gradient. The inner colour centre drifts toward
+    (off_x, off_y) as rings shrink, which fakes a lit 3D dome.
+    """
+    for i in range(steps, 0, -1):
+        t = i / steps
+        r1 = int(rx * t)
+        r2 = int(ry * t)
+        colour = lerp_hsv(inner_bgr, outer_bgr, 1 - t)
+        ex = int(cx + off_x * (1 - t))
+        ey = int(cy + off_y * (1 - t))
+        cv2.ellipse(canvas, (ex, ey), (max(1, r1), max(1, r2)),
+                    0, 0, 360, colour, -1, cv2.LINE_AA)
+
+
+# ---------------------------------------------------------------------------
 # Exponential Moving Average (adaptive)
 # ---------------------------------------------------------------------------
 
