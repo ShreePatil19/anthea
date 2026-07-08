@@ -30,16 +30,20 @@ def _jit(i, k=1.0):
     return math.sin(i * 12.9898 + k * 78.233) % 1.0 * 2.0 - 1.0
 
 
-def _petal_poly(cx, cy, th0, half_ang, r0, r1, wave_phase, n=56):
-    """Rounded fan petal spanning +-half_ang at angle th0, radius r0 to r1."""
+def _petal_poly(cx, cy, th0, half_ang, r0, r1, wave_phase, skew=0.0, n=56):
+    """
+    Rounded fan petal spanning +-half_ang at angle th0, radius r0 to r1.
+    skew shifts the apex off centre so petals are not mirror perfect.
+    """
     pts = []
     for i in range(n + 1):
         u = i / n
+        us = u ** (1.0 + skew)   # skewed apex position
         a = th0 + (u * 2 - 1) * half_ang
-        shoulder = math.sin(u * math.pi) ** 0.42
+        shoulder = math.sin(us * math.pi) ** 0.42
         rr = r0 + (r1 - r0) * (0.50 + 0.50 * shoulder)
         rr *= 1.0 + 0.030 * math.sin(u * 3.1 * math.pi + wave_phase)
-        rr *= 1.0 - 0.035 * math.exp(-((u - 0.5) ** 2) / 0.006)
+        rr *= 1.0 - 0.035 * math.exp(-((us - 0.5) ** 2) / 0.006)
         pts.append((cx + math.cos(a) * rr, cy + math.sin(a) * rr))
     for i in range(9):
         u = i / 8
@@ -132,7 +136,9 @@ def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
             th0 = rot + 2 * math.pi * i / n + _jit(li * 10 + i) * 0.05
             wave_phase = _jit(li * 10 + i, 3.0) * math.pi
             rr1 = r1 * (1.0 + 0.04 * _jit(li * 10 + i, 5.0))
-            pts = _petal_poly(bcx, bcy, th0, half_ang, r0, rr1, wave_phase)
+            skew = 0.22 * _jit(li * 10 + i, 7.0)
+            pts = _petal_poly(bcx, bcy, th0, half_ang, r0, rr1, wave_phase,
+                              skew=skew)
 
             # Crevice shadow beneath the petal for depth
             overlay = big.copy()

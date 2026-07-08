@@ -145,35 +145,29 @@ def _draw_filament(big, pts, thickness, c_base, c_tip, shadow):
         cv2.polylines(big, [np_chunk], False, colour, thickness, cv2.LINE_AA)
 
 
-def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
-    bloom   = max(0.0, min(1.0, bloom))
-    variant = (opts or {}).get("variant", "scarlet")
-    pal     = _palette(variant)
-    ease    = bloom ** 0.85
+def _dim_palette(pal, dim):
+    """Push every palette colour toward the shadow tone for depth haze."""
+    if dim <= 0.0:
+        return pal
+    out = {}
+    for key, col in pal.items():
+        out[key] = lerp_hsv(col, pal["shadow"], dim) if key != "shadow" else col
+    return out
 
-    tepal_len  = scale * 120 * (0.30 + 0.70 * ease)
-    stamen_len = tepal_len * (1.28 + 0.24 * ease)
-    recurve    = 0.25 + 0.55 * ease          # tips hook back as it opens
-    curl       = 0.55 + 0.25 * ease          # pinwheel sweep, one direction
-    spread     = 0.30 + 0.70 * ease          # bud = tight cluster pointing up
-    base_rot   = 0.26 + 0.03 * math.sin(t * 0.8)   # keep off the stem axis
 
-    H, W = canvas.shape[:2]
-    big = cv2.resize(canvas, (W * SS, H * SS), interpolation=cv2.INTER_LINEAR)
-    bcx, bcy = cx * SS, cy * SS
-    blen  = tepal_len * SS
-    bslen = stamen_len * SS
-
+def _floret(big, bcx, bcy, blen, bslen, scale, pal,
+            recurve, curl, spread, base_rot, seed=0):
+    """Draw one complete floret (tepals, stamens, style, throat)."""
     # --- Tepals: narrow crinkled ribbons, curled and recurved ---
     max_hw = blen * 0.085
-    tepal_order = sorted(range(N_TEPALS), key=lambda i: -abs(_jitter(i)))
+    tepal_order = sorted(range(N_TEPALS), key=lambda i: -abs(_jitter(i + seed)))
     for i in tepal_order:
         offs = (i / N_TEPALS) * 2 * math.pi - math.pi
-        angle = -math.pi / 2 + base_rot + offs * spread + _jitter(i) * 0.05
+        angle = -math.pi / 2 + base_rot + offs * spread + _jitter(i + seed) * 0.05
         spine = _tepal_spine(bcx, bcy, blen, angle, recurve, curl)
 
-        phase_l = _jitter(i, 2.0) * math.pi
-        phase_r = _jitter(i, 3.0) * math.pi
+        phase_l = _jitter(i + seed, 2.0) * math.pi
+        phase_r = _jitter(i + seed, 3.0) * math.pi
 
         def hw(tt, pl=phase_l, pr=phase_r):
             env = math.sin(min(tt * 1.25, 1.0) * math.pi) ** 0.8
@@ -217,16 +211,16 @@ def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
         offs = ((i + 0.5) / N_STAMENS) * 2 * math.pi - math.pi
         is_style = (i == N_STAMENS)
         if is_style:
-            offs = _jitter(17) * 0.4    # style leans off centre near the top
-        angle = -math.pi / 2 + base_rot + offs * spread + _jitter(i, 5.0) * 0.06
+            offs = _jitter(17 + seed) * 0.4    # style leans off centre near the top
+        angle = -math.pi / 2 + base_rot + offs * spread + _jitter(i + seed, 5.0) * 0.06
 
-        length = bslen * (1.0 + 0.06 * _jitter(i, 7.0))
+        length = bslen * (1.0 + 0.06 * _jitter(i + seed, 7.0))
         if is_style:
             length *= 1.12
 
         ox, oy = math.sin(angle), -math.cos(angle)
         lx, ly = math.cos(angle),  math.sin(angle)
-        sweep = 0.22 + 0.08 * _jitter(i, 9.0)
+        sweep = 0.22 + 0.08 * _jitter(i + seed, 9.0)
 
         def at(u_out, u_lat):
             return (bcx + ox * length * u_out + lx * length * u_lat,
@@ -260,6 +254,42 @@ def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
     cr = max(3, int(3.2 * scale * SS))
     cv2.circle(big, (int(bcx), int(bcy)), cr + 2, pal["shadow"], -1, cv2.LINE_AA)
     cv2.circle(big, (int(bcx), int(bcy)), cr, pal["base"], -1, cv2.LINE_AA)
+
+
+def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
+    bloom   = max(0.0, min(1.0, bloom))
+    variant = (opts or {}).get("variant", "scarlet")
+    pal     = _palette(variant)
+    ease    = bloom ** 0.85
+
+    tepal_len  = scale * 120 * (0.30 + 0.70 * ease)
+    stamen_len = tepal_len * (1.28 + 0.24 * ease)
+    recurve    = 0.25 + 0.55 * ease          # tips hook back as it opens
+    curl       = 0.55 + 0.25 * ease          # pinwheel sweep, one direction
+    spread     = 0.30 + 0.70 * ease          # bud = tight cluster pointing up
+    base_rot   = 0.26 + 0.03 * math.sin(t * 0.8)   # keep off the stem axis
+
+    H, W = canvas.shape[:2]
+    big = cv2.resize(canvas, (W * SS, H * SS), interpolation=cv2.INTER_LINEAR)
+    bcx, bcy = cx * SS, cy * SS
+    blen  = tepal_len * SS
+    bslen = stamen_len * SS
+
+    # Real Lycoris blooms in an umbel of several florets; hint at the
+    # cluster with two dimmer background florets once well open.
+    if ease > 0.55:
+        fade = min(1.0, (ease - 0.55) / 0.35)
+        back = [(-0.52, -0.14, 0.50, 0.34, 1.9, 100),
+                ( 0.48, -0.22, 0.44, 0.42, 4.1, 200)]
+        for ux, uy, sz, dim, rot, seed in back:
+            dpal = _dim_palette(pal, dim + 0.25 * (1.0 - fade))
+            _floret(big, bcx + ux * blen, bcy + uy * blen,
+                    blen * sz * fade, bslen * sz * 0.9 * fade,
+                    scale * sz, dpal, recurve, curl * 0.9,
+                    spread, base_rot + rot, seed=seed)
+
+    _floret(big, bcx, bcy, blen, bslen, scale, pal,
+            recurve, curl, spread, base_rot)
 
     out = cv2.resize(big, (W, H), interpolation=cv2.INTER_AREA)
     np.copyto(canvas, out)

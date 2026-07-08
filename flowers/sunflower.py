@@ -235,8 +235,9 @@ def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
     if bloom > 0.04:
         # Back row: darker, slightly longer, offset half a gap
         for i in range(n_petals):
-            angle = 2 * math.pi * i / n_petals + math.pi / n_petals + sway
-            L = bplen * (1.06 + 0.05 * _jit(i, 4.0))
+            angle = (2 * math.pi * i / n_petals + math.pi / n_petals + sway
+                     + 0.025 * _jit(i, 13.0))
+            L = bplen * (1.06 + 0.08 * _jit(i, 4.0))
             bx = bcx + (bdisc * 0.88) * math.sin(angle)
             by = bcy - (bdisc * 0.88) * math.cos(angle)
             _ray_petal(big, bx, by, L, max_hw * 0.94, angle,
@@ -244,8 +245,8 @@ def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
 
         # Front row
         for i in range(n_petals):
-            angle = 2 * math.pi * i / n_petals + sway
-            L = bplen * (1.0 + 0.06 * _jit(i))
+            angle = 2 * math.pi * i / n_petals + sway + 0.030 * _jit(i, 11.0)
+            L = bplen * (1.0 + 0.10 * _jit(i))
             bx = bcx + (bdisc * 0.88) * math.sin(angle)
             by = bcy - (bdisc * 0.88) * math.cos(angle)
             _ray_petal(big, bx, by, L, max_hw, angle,
