@@ -140,10 +140,25 @@ def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
             cv2.fillPoly(overlay, [pts_to_np(sh)], SHADOW)
             cv2.addWeighted(overlay, 0.42, big, 0.58, 0, big)
 
-            _radial_gradient_fill(big, pts, bcx, bcy, r0, rr1, c_base, c_edge)
+            # Directional light: petals facing away from the top left darken
+            facing = math.cos(th0) * (-0.707) + math.sin(th0) * (-0.707)
+            k = 0.5 - 0.5 * facing
+            p_base = lerp_hsv(c_base, SHADOW, 0.20 * k)
+            p_edge = lerp_hsv(c_edge, SHADOW, 0.14 * k)
+
+            _radial_gradient_fill(big, pts, bcx, bcy, r0, rr1, p_base, p_edge)
+
+            # Dark band just inside the rim: the cupped face turning away
+            arc = pts[:57]
+            inner_arc = scale_polygon(arc, bcx, bcy, 0.93)
+            np_inner = pts_to_np(inner_arc).reshape((-1, 1, 2))
+            overlay = big.copy()
+            cv2.polylines(overlay, [np_inner], False,
+                          lerp_hsv(p_base, SHADOW, 0.35),
+                          max(2, int(2.2 * scale * SS)), cv2.LINE_AA)
+            cv2.addWeighted(overlay, 0.30, big, 0.70, 0, big)
 
             # Rolled rim light along the outer arc only
-            arc = pts[:57]
             np_arc = pts_to_np(arc).reshape((-1, 1, 2))
             overlay = big.copy()
             cv2.polylines(overlay, [np_arc], False, c_rim,

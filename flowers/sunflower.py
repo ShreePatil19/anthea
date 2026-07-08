@@ -41,7 +41,7 @@ def _jit(i, k=1.0):
 
 
 def _ray_petal(canvas, bx, by, length, max_hw, angle, bow,
-               c_base, c_mid, c_tip, crease_col, n=30):
+               c_base, c_mid, c_tip, crease_col, n=30, cast_shadow=False):
     """
     One strap-like ray petal from (bx,by) outward along angle.
     Gradient follows the petal spine; 3 crease lines run along it.
@@ -77,6 +77,13 @@ def _ray_petal(canvas, bx, by, length, max_hw, angle, bow,
         right.append((sx + px * w, sy + py * w))
     outline = left + list(reversed(right))
     np_out = pts_to_np(outline)
+
+    if cast_shadow:
+        off = 3.0 * SS
+        shifted = np_out + np.array([int(off), int(off)])
+        overlay = canvas.copy()
+        cv2.fillPoly(overlay, [shifted], SHADOW)
+        cv2.addWeighted(overlay, 0.30, canvas, 0.70, 0, canvas)
 
     # Gradient fill in bands along the spine
     x0 = max(0, int(np_out[:, 0].min())); x1 = min(canvas.shape[1] - 1, int(np_out[:, 0].max()))
@@ -167,6 +174,28 @@ def _disc(canvas, cx, cy, disc_r):
         cv2.circle(canvas, (int(round(sx)), int(round(sy))), dot,
                    FLORET, -1, cv2.LINE_AA)
 
+    _dome_shade(canvas, cx, cy, disc_r)
+
+
+def _dome_shade(canvas, cx, cy, r):
+    """Smooth directional shading so the disc reads as a dome, lit top left."""
+    x0 = max(0, int(cx - r)); x1 = min(canvas.shape[1] - 1, int(cx + r))
+    y0 = max(0, int(cy - r)); y1 = min(canvas.shape[0] - 1, int(cy + r))
+    if x1 <= x0 or y1 <= y0:
+        return
+    mask = np.zeros((y1 - y0 + 1, x1 - x0 + 1), dtype=np.uint8)
+    cv2.circle(mask, (int(cx) - x0, int(cy) - y0), int(r), 255, -1, cv2.LINE_AA)
+    yy, xx = np.mgrid[y0:y1 + 1, x0:x1 + 1]
+    lx, ly = cx - r * 0.28, cy - r * 0.28
+    d = np.hypot(xx - lx, yy - ly) / (r * 1.9)
+    f = np.clip(1.16 - 0.42 * d, 0.72, 1.16)
+    region = canvas[y0:y1 + 1, x0:x1 + 1].astype(np.float32)
+    shaded = np.clip(region * f[..., None], 0, 255).astype(np.uint8)
+    sel = mask > 0
+    region = canvas[y0:y1 + 1, x0:x1 + 1]
+    region[sel] = shaded[sel]
+    canvas[y0:y1 + 1, x0:x1 + 1] = region
+
 
 def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
     bloom = max(0.0, min(1.0, bloom))
@@ -204,7 +233,8 @@ def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
             bx = bcx + (bdisc * 0.88) * math.sin(angle)
             by = bcy - (bdisc * 0.88) * math.cos(angle)
             _ray_petal(big, bx, by, L, max_hw, angle,
-                       _jit(i, 2.0), P_BASE, P_MID, P_TIP, P_CREASE)
+                       _jit(i, 2.0), P_BASE, P_MID, P_TIP, P_CREASE,
+                       cast_shadow=True)
 
     _disc(big, bcx, bcy, bdisc)
 

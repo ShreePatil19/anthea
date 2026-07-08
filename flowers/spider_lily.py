@@ -98,7 +98,7 @@ def _ribbon(spine, half_width_fn):
     return left + list(reversed(right))
 
 
-def _gradient_fill_poly(canvas, pts, spine, c_base, c_tip):
+def _gradient_fill_poly(canvas, pts, spine, c_base, c_tip, c_mid=None):
     """Fill polygon with a gradient that follows the spine base to tip."""
     np_pts = pts_to_np(pts)
     x0 = max(0, int(np_pts[:, 0].min())); x1 = min(canvas.shape[1] - 1, int(np_pts[:, 0].max()))
@@ -119,7 +119,13 @@ def _gradient_fill_poly(canvas, pts, spine, c_base, c_tip):
     bands = 14
     for b in range(bands):
         t = (b + 0.5) / bands
-        colour = np.array(lerp_hsv(c_base, c_tip, t), dtype=np.uint8)
+        if c_mid is not None and t < 0.30:
+            col = lerp_hsv(c_base, c_mid, t / 0.30)
+        elif c_mid is not None:
+            col = lerp_hsv(c_mid, c_tip, (t - 0.30) / 0.70)
+        else:
+            col = lerp_hsv(c_base, c_tip, t)
+        colour = np.array(col, dtype=np.uint8)
         sel = (mask > 0) & (d >= b / bands) & (d < (b + 1) / bands + (1 if b == bands - 1 else 0))
         region[sel] = colour
     canvas[y0:y1 + 1, x0:x1 + 1] = region
@@ -185,8 +191,14 @@ def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
         cv2.fillPoly(overlay, [pts_to_np(shadow)], pal["shadow"])
         cv2.addWeighted(overlay, 0.45, big, 0.55, 0, big)
 
-        # Main fill with spine following gradient
-        _gradient_fill_poly(big, outline, spine, pal["base"], pal["tip"])
+        # Main fill: deep base, bright scarlet mid, pink tip
+        deep = lerp_hsv(pal["shadow"], pal["base"], 0.45)
+        facing = math.cos(angle - math.pi / 2) * (-0.707) + \
+                 math.sin(angle - math.pi / 2) * (-0.707)
+        k = 0.5 - 0.5 * facing
+        base_c = lerp_hsv(pal["mid"], pal["shadow"], 0.16 * k)
+        tip_c  = lerp_hsv(pal["tip"], pal["shadow"], 0.10 * k)
+        _gradient_fill_poly(big, outline, spine, deep, tip_c, c_mid=base_c)
 
         # Bright midrib stripe along the spine
         def hw_mid(tt):
