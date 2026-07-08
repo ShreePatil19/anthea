@@ -22,13 +22,13 @@ floret ring.
 | Criterion                        | Score | Notes                                             |
 |----------------------------------|-------|---------------------------------------------------|
 | Match to reference (25)          |  19   | Strap petals with creases and amber bases now read true; still a flat front view versus the domed 3D disc |
-| Signature feature fidelity (20)  |  16   | 300 golden angle seeds plus floret ring; seed texture simpler than the real spiral lattice |
+| Signature feature fidelity (20)  |  17   | 300 golden angle seeds as oriented ellipses so the spiral lattice reads, floret ring, notched petal tips |
 | Colour realism (15)              |  13   | Amber to golden gradient along each petal, lime cast gone |
 | Depth and shading (15)           |  13   | Domed disc lit from top left, per petal cast shadows onto the back row |
 | Edge and curve quality (10)      |   9   | Supersampled, pointed lanceolate tips, no faceting |
 | Bloom dynamics (10)              |   9   | Green wrapped bud opens to full disc convincingly |
 | Beauty (5)                       |   4   |                                                    |
-| **Overall**                      | **83**|                                                    |
+| **Overall**                      | **84**|                                                    |
 
 ## Blue Rose (refs/blue_rose.jpg)
 
@@ -64,12 +64,12 @@ tepals plus very long thin arching stamens with small anthers.
 
 ## Notes
 
-- Scores climbed from 78/73/71 to 83/84/85 this run; the 95 gate is not yet
-  met. Remaining gaps: finer disc and petal texture, stronger 3D petal
-  curvature, and reference matches limited by the flat front view.
+- Scores climbed from 78/73/71 to 84/84/85 this run; the 95 gate is not yet
+  met. Remaining gaps: stronger 3D petal curvature and reference matches
+  limited by the flat front view.
 - Self grading is optimistic. An independent reviewer would likely score 5 to
   10 points lower per flower on visual criteria.
 - Live webcam mode was NOT tested (remote headless environment, no camera).
 - Headless selftest runs clean; all 16 sample PNGs committed to samples/.
 - Imports verified: all modules load without error.
-- Iteration count this run: 6 render iterations across all flowers (limit 8).
+- Iteration count this run: 7 render iterations across all flowers (limit 8).
