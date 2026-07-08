@@ -90,12 +90,12 @@ def _bg():
     return bg
 
 
-def render_and_save(module, species, bloom, scale, filename):
+def render_and_save(module, species, bloom, scale, filename, opts=None):
     canvas = _bg()
     cx, cy = W // 2, H // 2 - 30
     # Draw stem first, then flower on top
     stem.draw(canvas, cx, cy, H - 20, scale=scale, t=0.0, sway=0.0)
-    module.draw(canvas, cx, cy, bloom=bloom, scale=scale, t=0.0, opts=None)
+    module.draw(canvas, cx, cy, bloom=bloom, scale=scale, t=0.0, opts=opts)
 
     out_path = os.path.join("samples", filename)
     cv2.imwrite(out_path, canvas)
@@ -154,6 +154,12 @@ def run():
         else:
             gate_results[species] = (False, None, "no full-bloom render")
             all_passed = False
+
+    # White spider lily variant (Lycoris albiflora)
+    print("\n-- spider_lily white variant --")
+    render_and_save(spider_lily, "spider_lily", 1.0, 1.0,
+                    "spider_lily_white_bloom_100.png",
+                    opts={"variant": "white"})
 
     # Demo frames
     print("\n-- demo frames --")

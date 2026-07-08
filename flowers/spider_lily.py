@@ -31,7 +31,7 @@ W_SHADOW  = hsv_to_bgr(24,  70, 170)
 W_HILIGHT = hsv_to_bgr(28,  10, 255)
 W_S_BASE  = hsv_to_bgr(26,  60, 240)
 W_S_TIP   = hsv_to_bgr(24,  20, 255)
-W_ANTHER  = hsv_to_bgr(48, 170, 235)
+W_ANTHER  = hsv_to_bgr(24, 200, 225)
 
 N_TEPALS  = 6
 N_STAMENS = 6
