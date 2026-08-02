@@ -1,142 +1,208 @@
 """
 Blue rose renderer.
-Viewed from slightly above: overlapping teardrop petals in concentric rings.
-Outer ring open/cupped, inner rings furled. Clearly vivid blue.
+Top view: spiral nested layers of broad cupped petals, deep blue bases
+fading to lighter cool blue edges, with a furled spiral core.
 draw(canvas, cx, cy, bloom, scale, t, opts) is the public interface.
 """
 import math
 import cv2
 import numpy as np
 
-from util import (
-    pts_to_np, scale_polygon, apply_gradient_to_poly,
-    lerp_colour, lerp_hsv, hsv_to_bgr,
-    gradient_circle_hsv, curved_petal_polygon,
-)
+from util import pts_to_np, lerp_hsv, hsv_to_bgr, curved_petal_polygon, scale_polygon
 
-# Deep vivid blue palette (BGR)
-DEEP    = hsv_to_bgr(118, 250, 150)   # deep indigo-blue
-MID     = hsv_to_bgr(116, 235, 200)   # medium blue
-EDGE    = hsv_to_bgr(112, 200, 245)   # cerulean lighter edge
-HILIGHT = hsv_to_bgr(108,  55, 255)   # dewy pale highlight
-SHADOW  = hsv_to_bgr(123, 255,  40)   # very dark navy shadow
-SEPAL   = hsv_to_bgr( 80, 170,  78)
-SEPAL_D = hsv_to_bgr( 76, 188,  40)
+SEPAL   = hsv_to_bgr( 80, 170,  82)
+SEPAL_D = hsv_to_bgr( 76, 190,  42)
+SHADOW  = hsv_to_bgr(122, 255,  38)
+
+SS = 3
+GOLDEN = 2.39996  # golden angle in radians
+
+# Layer spec, outer first: (n_petals, r_outer_frac, half_ang_frac, bloom_thresh)
+LAYERS = [
+    (7, 1.00, 1.30, 0.00),
+    (6, 0.74, 1.28, 0.12),
+    (5, 0.53, 1.24, 0.30),
+    (4, 0.36, 1.18, 0.52),
+]
 
 
-def _petal_pts(cx, cy, r_base, length, half_w, angle, n=24):
-    """Teardrop rose petal from r_base outward along angle direction."""
-    sin_a = math.sin(angle)
-    cos_a = math.cos(angle)
-    perp_x = cos_a
-    perp_y = sin_a
-    bx = cx + sin_a * r_base
-    by = cy - cos_a * r_base
+def _jit(i, k=1.0):
+    return math.sin(i * 12.9898 + k * 78.233) % 1.0 * 2.0 - 1.0
+
+
+def _petal_poly(cx, cy, th0, half_ang, r0, r1, wave_phase, skew=0.0, n=56):
+    """
+    Rounded fan petal spanning +-half_ang at angle th0, radius r0 to r1.
+    skew shifts the apex off centre so petals are not mirror perfect.
+    """
     pts = []
     for i in range(n + 1):
-        t = i / n
-        # Narrow at base, widest ~38% along, tapers to point at tip
-        w = half_w * math.sin(min(t * 2.6, math.pi))
-        sx = bx + sin_a * length * t
-        sy = by - cos_a * length * t
-        pts.append((sx - perp_x * w, sy - perp_y * w))
-    for i in range(n, -1, -1):
-        t = i / n
-        w = half_w * math.sin(min(t * 2.6, math.pi))
-        sx = bx + sin_a * length * t
-        sy = by - cos_a * length * t
-        pts.append((sx + perp_x * w, sy + perp_y * w))
+        u = i / n
+        us = u ** (1.0 + skew)   # skewed apex position
+        a = th0 + (u * 2 - 1) * half_ang
+        shoulder = math.sin(us * math.pi) ** 0.42
+        rr = r0 + (r1 - r0) * (0.50 + 0.50 * shoulder)
+        rr *= 1.0 + 0.030 * math.sin(u * 3.1 * math.pi + wave_phase)
+        rr *= 1.0 - 0.035 * math.exp(-((us - 0.5) ** 2) / 0.006)
+        pts.append((cx + math.cos(a) * rr, cy + math.sin(a) * rr))
+    for i in range(9):
+        u = i / 8
+        a = th0 + (1 - 2 * u) * half_ang * 0.50
+        pts.append((cx + math.cos(a) * r0, cy + math.sin(a) * r0))
     return pts
 
 
-def _draw_petal(canvas, cx, cy, r_base, length, half_w, angle,
-                c_base, c_mid, c_edge, c_shadow, c_hilight):
-    pts = _petal_pts(cx, cy, r_base, length, half_w, angle)
-    # Dark shadow behind (enlarged from flower centre)
-    shadow = [(cx + (x - cx) * 1.06, cy + (y - cy) * 1.06) for x, y in pts]
-    cv2.fillPoly(canvas, [pts_to_np(shadow)], c_shadow)
-    # Base fill
-    cv2.fillPoly(canvas, [pts_to_np(pts)], c_base)
-    # Outer ~55% of petal slightly lighter
-    outer = _petal_pts(cx, cy, r_base + length * 0.45, length * 0.56,
-                       int(half_w * 0.88), angle)
-    cv2.fillPoly(canvas, [pts_to_np(outer)], c_mid)
-    # Small highlight near tip
-    hi = _petal_pts(cx, cy, r_base + length * 0.68, length * 0.26,
-                    int(half_w * 0.36), angle)
-    cv2.fillPoly(canvas, [pts_to_np(hi)], c_hilight)
+def _radial_gradient_fill(canvas, pts, cx, cy, r0, r1, c_base, c_edge):
+    """Fill polygon with colour graded by distance from the flower centre."""
+    np_pts = pts_to_np(pts)
+    x0 = max(0, int(np_pts[:, 0].min())); x1 = min(canvas.shape[1] - 1, int(np_pts[:, 0].max()))
+    y0 = max(0, int(np_pts[:, 1].min())); y1 = min(canvas.shape[0] - 1, int(np_pts[:, 1].max()))
+    if x1 <= x0 or y1 <= y0:
+        return
+    mask = np.zeros((y1 - y0 + 1, x1 - x0 + 1), dtype=np.uint8)
+    cv2.fillPoly(mask, [np_pts - [x0, y0]], 255)
+    yy, xx = np.mgrid[y0:y1 + 1, x0:x1 + 1]
+    d = (np.hypot(xx - cx, yy - cy) - r0) / max(1.0, (r1 - r0))
+    d = np.clip(d, 0.0, 1.0)
+    region = canvas[y0:y1 + 1, x0:x1 + 1]
+    bands = 16
+    for b in range(bands):
+        colour = np.array(lerp_hsv(c_base, c_edge, (b + 0.5) / bands), dtype=np.uint8)
+        hi = (b + 1) / bands if b < bands - 1 else 1.01
+        sel = (mask > 0) & (d >= b / bands) & (d < hi)
+        region[sel] = colour
+    canvas[y0:y1 + 1, x0:x1 + 1] = region
 
 
-def _sepal(canvas, cx, cy, radius):
+def _crescent(cx, cy, r_mid, thick, a0, a1, n=36):
+    pts = []
+    for i in range(n + 1):
+        u = i / n
+        a = a0 + (a1 - a0) * u
+        w = thick * (math.sin(u * math.pi) ** 0.6) / 2
+        pts.append((cx + math.cos(a) * (r_mid + w), cy + math.sin(a) * (r_mid + w)))
+    for i in range(n, -1, -1):
+        u = i / n
+        a = a0 + (a1 - a0) * u
+        w = thick * (math.sin(u * math.pi) ** 0.6) / 2
+        pts.append((cx + math.cos(a) * (r_mid - w), cy + math.sin(a) * (r_mid - w)))
+    return pts
+
+
+def _sepals(canvas, cx, cy, radius):
     for i in range(5):
         angle = 2 * math.pi * i / 5 + math.pi / 5
-        pts = curved_petal_polygon(cx, cy, int(radius * 1.28),
-                                   int(radius * 0.24), angle,
+        pts = curved_petal_polygon(cx, cy, int(radius * 1.30),
+                                   int(radius * 0.22), angle,
                                    curvature=0.06, n_pts=20)
         cv2.fillPoly(canvas, [pts_to_np(scale_polygon(pts, cx, cy, 1.05))], SEPAL_D)
         cv2.fillPoly(canvas, [pts_to_np(pts)], SEPAL)
 
 
-# Ring spec: (n_petals, r_base_frac, length_frac, half_w_frac, bloom_thresh, rot)
-# Wide half_w_frac ensures heavy petal overlap for rose-like look
-RINGS = [
-    (8, 0.48, 0.52, 0.44, 0.00, 0.00),   # outermost: wide overlapping
-    (7, 0.28, 0.44, 0.38, 0.10, 0.40),   # mid-outer
-    (6, 0.15, 0.33, 0.32, 0.28, 0.82),   # mid-inner
-    (5, 0.06, 0.22, 0.26, 0.50, 1.22),   # inner
-    (4, 0.02, 0.12, 0.20, 0.70, 1.65),   # tight core
-]
-
-
 def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
     bloom = max(0.0, min(1.0, bloom))
+    ease = bloom ** 0.9
 
-    base_r = int(scale * 92)
+    base_r = scale * 95 * (0.40 + 0.60 * ease)
 
-    S = 3
     H, W = canvas.shape[:2]
-    big = cv2.resize(canvas, (W * S, H * S), interpolation=cv2.INTER_LINEAR)
-    bcx, bcy = cx * S, cy * S
-    br = base_r * S
+    big = cv2.resize(canvas, (W * SS, H * SS), interpolation=cv2.INTER_LINEAR)
+    bcx, bcy = cx * SS, cy * SS
+    br = base_r * SS
 
-    _sepal(big, bcx, bcy, int(br * 0.50))
+    _sepals(big, bcx, bcy, int(br * 0.55 + scale * SS * 14))
 
-    n_rings = len(RINGS)
+    sway = 0.04 * math.sin(t * 0.7)
 
-    for ring_i, (n, r_base_f, len_f, hw_f, threshold, rot) in enumerate(RINGS):
-        layer_t = ring_i / (n_rings - 1)
-
-        if bloom <= threshold:
-            layer_bloom = 0.0
-        else:
-            layer_bloom = min(1.0, (bloom - threshold) / max(0.01, 1.0 - threshold))
-
-        if layer_bloom < 0.02:
+    n_layers = len(LAYERS)
+    for li, (n, r_f, ang_f, thresh) in enumerate(LAYERS):
+        lt = li / (n_layers - 1)          # 0 outer -> 1 inner
+        if bloom < thresh:
             continue
+        unfurl = min(1.0, (bloom - thresh) / max(0.01, 1.0 - thresh))
+        open_s = 0.32 + 0.68 * unfurl
 
-        open_s  = 0.25 + 0.75 * layer_bloom
-        r_base  = int(br * r_base_f)
-        length  = max(r_base + 6, int(br * len_f * open_s))
-        half_w  = max(4, int(br * hw_f * open_s))
+        r1 = br * r_f * open_s
+        r0 = r1 * (0.28 + 0.10 * lt)
+        half_ang = (math.pi / n) * ang_f
+        rot = li * GOLDEN + sway
 
-        # Outer rings cerulean, inner rings deep indigo
-        h_base = int(117 - layer_t * 4)
-        h_mid  = int(114 - layer_t * 3)
-        h_edge = int(111 - layer_t * 2)
-        c_base    = hsv_to_bgr(h_base, 248 - int(layer_t * 14), int(155 + layer_t * 28))
-        c_mid     = hsv_to_bgr(h_mid,  228 - int(layer_t * 10), int(210 + layer_t * 20))
-        c_edge    = hsv_to_bgr(h_edge, 205 - int(layer_t * 8),  int(245 + layer_t * 10))
-        c_shadow  = hsv_to_bgr(122, 255, max(18, int(48 - layer_t * 14)))
-        c_hilight = hsv_to_bgr(109, max(30, int(62 - layer_t * 24)), 255)
+        # Deep blue bases, lighter cool blue edges; inner layers darker
+        c_base = hsv_to_bgr(117 - lt * 2, 252, 105 + (1 - lt) * 35)
+        c_edge = hsv_to_bgr(106 + lt * 3, 165 - lt * 25, 240 + lt * 15)
+        c_rim  = hsv_to_bgr(104, 95, 255)
 
         for i in range(n):
-            angle = 2 * math.pi * i / n + rot
-            _draw_petal(big, bcx, bcy, r_base, length, half_w, angle,
-                        c_base, c_mid, c_edge, c_shadow, c_hilight)
+            th0 = rot + 2 * math.pi * i / n + _jit(li * 10 + i) * 0.05
+            wave_phase = _jit(li * 10 + i, 3.0) * math.pi
+            rr1 = r1 * (1.0 + 0.04 * _jit(li * 10 + i, 5.0))
+            skew = 0.22 * _jit(li * 10 + i, 7.0)
+            pts = _petal_poly(bcx, bcy, th0, half_ang, r0, rr1, wave_phase,
+                              skew=skew)
 
-    # Tight centre
-    cr = max(5, int(br * 0.055))
-    gradient_circle_hsv(big, bcx, bcy, cr + 2, MID, SHADOW, steps=8)
+            # Crevice shadow beneath the petal for depth
+            overlay = big.copy()
+            sh = scale_polygon(pts, bcx, bcy, 1.045)
+            cv2.fillPoly(overlay, [pts_to_np(sh)], SHADOW)
+            cv2.addWeighted(overlay, 0.42, big, 0.58, 0, big)
+
+            # Directional light: petals facing away from the top left darken
+            facing = math.cos(th0) * (-0.707) + math.sin(th0) * (-0.707)
+            k = 0.5 - 0.5 * facing
+            p_base = lerp_hsv(c_base, SHADOW, 0.20 * k)
+            p_edge = lerp_hsv(c_edge, SHADOW, 0.14 * k)
+
+            _radial_gradient_fill(big, pts, bcx, bcy, r0, rr1, p_base, p_edge)
+
+            # Dark band just inside the rim: the cupped face turning away
+            arc = pts[:57]
+            inner_arc = scale_polygon(arc, bcx, bcy, 0.93)
+            np_inner = pts_to_np(inner_arc).reshape((-1, 1, 2))
+            overlay = big.copy()
+            cv2.polylines(overlay, [np_inner], False,
+                          lerp_hsv(p_base, SHADOW, 0.35),
+                          max(2, int(2.2 * scale * SS)), cv2.LINE_AA)
+            cv2.addWeighted(overlay, 0.30, big, 0.70, 0, big)
+
+            # Rolled rim light along the outer arc only
+            np_arc = pts_to_np(arc).reshape((-1, 1, 2))
+            overlay = big.copy()
+            cv2.polylines(overlay, [np_arc], False, c_rim,
+                          max(2, int(1.4 * scale * SS)), cv2.LINE_AA)
+            cv2.addWeighted(overlay, 0.55, big, 0.45, 0, big)
+
+            # Soft dewy highlight near the top of petals facing the light
+            if li < 2 and k < 0.55:
+                ha = th0 - half_ang * 0.25
+                hr = r0 + (rr1 - r0) * 0.68
+                hx = bcx + math.cos(ha) * hr
+                hy = bcy + math.sin(ha) * hr
+                ew = max(2, int((rr1 - r0) * 0.13))
+                eh = max(1, int((rr1 - r0) * 0.06))
+                overlay = big.copy()
+                cv2.ellipse(overlay, (int(hx), int(hy)), (ew, eh),
+                            math.degrees(th0) + 90, 0, 360,
+                            hsv_to_bgr(103, 45, 255), -1, cv2.LINE_AA)
+                cv2.addWeighted(overlay, 0.22, big, 0.78, 0, big)
+
+    # Furled spiral core, opens only at high bloom
+    core_r = br * 0.22 * (0.6 + 0.4 * ease)
+    core_open = max(0.0, (bloom - 0.55) / 0.45)
+    c_dark = hsv_to_bgr(119, 255, 80)
+    cv2.circle(big, (int(bcx), int(bcy)), max(3, int(core_r * 1.02)),
+               hsv_to_bgr(117, 250, 120), -1, cv2.LINE_AA)
+    for k in range(4):
+        u = k / 3.0
+        rm = core_r * (0.30 + 0.70 * (1 - u)) * (0.7 + 0.3 * core_open)
+        a0 = k * 2.1 + GOLDEN + sway
+        arc_span = 3.6 - u * 0.8
+        cres = _crescent(bcx, bcy, rm, rm * 0.62, a0, a0 + arc_span)
+        col = lerp_hsv(c_dark, hsv_to_bgr(108, 170, 235), 0.40 + 0.45 * u)
+        overlay = big.copy()
+        cv2.fillPoly(overlay, [pts_to_np(cres)], col)
+        cv2.addWeighted(overlay, 0.9, big, 0.1, 0, big)
+    cv2.circle(big, (int(bcx), int(bcy)), max(2, int(core_r * 0.16)),
+               hsv_to_bgr(113, 220, 150), -1, cv2.LINE_AA)
 
     out = cv2.resize(big, (W, H), interpolation=cv2.INTER_AREA)
     np.copyto(canvas, out)
