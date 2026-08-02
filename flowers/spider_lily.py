@@ -57,9 +57,9 @@ def _stamen_colours(variant):
 
 def _build_tepal_outline(cx, cy, length, half_width, angle, recurve):
     """
-    Build the outline of one tepal as a list of (x,y).
-    Thin ribbon that sweeps outward then curves back (recurves) with wavy edges.
-    recurve: 0=straight outward, 0.6=strongly bent back at full bloom.
+    Build the outline of one tepal as a list of (x,y), plus a fold-over
+    polygon for the underside that shows past the recurve bend.
+    Returns (outline, spine, foldover_pts_or_None).
     """
     sin_a = math.sin(angle)
     cos_a = math.cos(angle)
@@ -75,12 +75,10 @@ def _build_tepal_outline(cx, cy, length, half_width, angle, recurve):
     spine = bezier_cubic(p0, p1, p2, p3, steps=40)
 
     def width_at(t):
-        # Fast rise from base to 20%, then gradual taper to a fine tip
         rise = min(1.0, t * 5.0)
         fall = math.pow(max(0.0, 1.0 - t), 0.72)
         base_w = half_width * rise * fall
-        # 3 cycles of crinkle: the wavy edge characteristic of Lycoris radiata
-        wave = half_width * 0.10 * math.sin(t * 6 * math.pi)
+        wave = half_width * 0.14 * math.sin(t * 7 * math.pi)
         return max(1.0, base_w + wave)
 
     def perp_at(j):
@@ -107,7 +105,30 @@ def _build_tepal_outline(cx, cy, length, half_width, angle, recurve):
         right_side.append((sx + px * w, sy + py * w))
 
     outline = left_side + list(reversed(right_side))
-    return outline, spine
+
+    # Fold-over: when recurve is strong enough, the outer third of the tepal
+    # folds back toward the viewer, exposing its underside. We draw this as a
+    # separate polygon in a darker shade, starting from the fold point.
+    foldover = None
+    if recurve > 0.35:
+        fold_start = int(n_pts * 0.55)
+        fold_left  = []
+        fold_right = []
+        for j in range(fold_start, n_pts):
+            t = j / (n_pts - 1)
+            # Slightly wider than the top surface to peek out from behind
+            w = width_at(t) * 1.25
+            px, py = perp_at(j)
+            sx, sy = spine[j]
+            # Offset the underside outward from the spine to simulate depth
+            offset = half_width * 0.35 * (t - 0.55) / 0.45
+            ox = sx + sin_a * offset
+            oy = sy - cos_a * offset
+            fold_left.append( (ox - px * w, oy - py * w))
+            fold_right.append((ox + px * w, oy + py * w))
+        foldover = fold_left + list(reversed(fold_right))
+
+    return outline, spine, foldover
 
 
 def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
@@ -134,18 +155,26 @@ def draw(canvas, cx, cy, bloom=1.0, scale=1.0, t=0.0, opts=None):
     bstem = stamen_len * S
 
     # --- Draw tepals (behind stamens) ---
+    # Underside colour: darker, desaturated scarlet
+    c_under = hsv_to_bgr(4, 180, 100)
+
     for i in range(N_TEPALS):
         angle = 2 * math.pi * i / N_TEPALS - math.pi / 2 + ANGLE_OFFSET
 
-        outline, spine = _build_tepal_outline(bcx, bcy, blen, bw, angle, recurve)
+        outline, spine, foldover = _build_tepal_outline(
+            bcx, bcy, blen, bw, angle, recurve)
 
         # Shadow (enlarged from flower centre)
         shadow_pts = scale_polygon(outline, bcx, bcy, 1.08)
         cv2.fillPoly(big, [pts_to_np(shadow_pts)], c_shadow)
 
+        # Draw the fold-over underside first (it sits behind the top surface)
+        lf = light_factor(angle)
+        if foldover:
+            cv2.fillPoly(big, [pts_to_np(foldover)], shade_bgr(c_under, lf))
+
         # Radial gradient: crimson at base, vivid scarlet outward,
         # shaded by the global light direction
-        lf = light_factor(angle)
         apply_gradient_radial(big, outline,
                               shade_bgr(c_deep, lf), shade_bgr(c_base, lf),
                               bcx, bcy)

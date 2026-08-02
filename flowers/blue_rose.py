@@ -41,8 +41,9 @@ SEPAL_D = hsv_to_bgr( 74, 188,  36)
 
 def _petal_pts(cx, cy, r_base, length, half_w, angle, n=28):
     """
-    Cupped rose petal: narrow at base (near flower centre), broadens outward,
-    slightly curled inward at the outer tip to suggest depth.
+    Cupped rose petal: narrow at base, broadens outward, curled inward at tip.
+    Left and right sides are asymmetric to suggest the petal curling toward
+    the viewer on one side (cupping).
     """
     sin_a = math.sin(angle)
     cos_a = math.cos(angle)
@@ -54,15 +55,16 @@ def _petal_pts(cx, cy, r_base, length, half_w, angle, n=28):
     pts_right = []
     for i in range(n + 1):
         t = i / n
-        # Width: stays wide through most of length, rolls inward near tip
         w_env = half_w * (math.sin(t * math.pi) ** 0.65)
-        # Slight inward curl at the outer 20% of petal (petal edge rolls toward viewer)
-        curl = half_w * 0.12 * max(0.0, (t - 0.80) / 0.20)
+        curl = half_w * 0.14 * max(0.0, (t - 0.75) / 0.25)
         w = max(0.5, w_env - curl)
+        # Asymmetric cupping: one side slightly wider than the other
+        w_left  = w * 1.10
+        w_right = w * 0.92
         sx = bx + sin_a * length * t
         sy = by - cos_a * length * t
-        pts_left.append( (sx - perp_x * w, sy - perp_y * w))
-        pts_right.append((sx + perp_x * w, sy + perp_y * w))
+        pts_left.append( (sx - perp_x * w_left,  sy - perp_y * w_left))
+        pts_right.append((sx + perp_x * w_right, sy + perp_y * w_right))
     return pts_left + list(reversed(pts_right))
 
 

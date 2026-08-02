@@ -43,8 +43,11 @@ SEED_DARK     = hsv_to_bgr(10, 210, 16)
 SEED_LIGHT    = hsv_to_bgr(15, 205, 52)
 
 
+VEIN_COL = hsv_to_bgr(22, 200, 175)
+
+
 def _petal(canvas, px, py, length, width, angle):
-    """One strap-like petal: shadow, direction-gradient fill, centre highlight."""
+    """One strap-like petal: shadow, gradient, centre highlight, vein lines."""
     lf = light_factor(angle)
     pts = curved_petal_polygon(px, py, length, width, angle, curvature=0.015, n_pts=36)
     shadow_pts = scale_polygon(pts, px, py, 1.05)
@@ -55,6 +58,12 @@ def _petal(canvas, px, py, length, width, angle):
     # Narrow bright streak down centre
     hi = scale_polygon(pts, px, py, 0.30)
     cv2.fillPoly(canvas, [pts_to_np(hi)], shade_bgr(PETAL_MID, lf))
+    # Longitudinal vein: thin line along the petal midrib
+    sin_a = math.sin(angle)
+    cos_a = math.cos(angle)
+    v0 = (int(px + sin_a * length * 0.10), int(py - cos_a * length * 0.10))
+    v1 = (int(px + sin_a * length * 0.88), int(py - cos_a * length * 0.88))
+    cv2.line(canvas, v0, v1, shade_bgr(VEIN_COL, lf), 1, cv2.LINE_AA)
 
 
 def _petal_back(canvas, px, py, length, width, angle):
